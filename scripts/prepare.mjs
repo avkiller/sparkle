@@ -214,7 +214,7 @@ async function resolveSidecar(binInfo) {
  * download the file to the extra dir
  */
 async function resolveResource(binInfo) {
-  const { file, downloadURL } = binInfo
+  const { file, downloadURL, needExecutable = false } = binInfo
 
   const resDir = path.join(cwd, 'extra', 'files')
   const targetPath = path.join(resDir, file)
@@ -225,6 +225,11 @@ async function resolveResource(binInfo) {
 
   fs.mkdirSync(resDir, { recursive: true })
   await downloadFile(downloadURL, targetPath)
+
+  if (needExecutable && platform !== 'win32') {
+    execSync(`chmod 755 ${targetPath}`)
+    console.log(`[INFO]: ${file} chmod finished`)
+  }
 
   console.log(`[INFO]: ${file} finished`)
 }
@@ -273,16 +278,16 @@ const resolveEnableLoopback = () =>
     file: 'enableLoopback.exe',
     downloadURL: `https://github.com/Kuingsmile/uwp-tool/releases/download/latest/enableLoopback.exe`
   })
-const resolveSysproxy = () => {
+const resolveSparkleService = () => {
   const map = {
-    'win32-x64': 'sysproxy-windows-amd64-v3',
-    'win32-ia32': 'sysproxy-windows-386',
-    'win32-arm64': 'sysproxy-windows-arm64',
-    'darwin-x64': 'sysproxy-darwin-amd64-v3',
-    'darwin-arm64': 'sysproxy-darwin-arm64',
-    'linux-x64': 'sysproxy-linux-amd64-v3',
-    'linux-arm64': 'sysproxy-linux-arm64',
-    'linux-loong64': 'sysproxy-linux-loong64-abi2'
+    'win32-x64': 'sparkle-service-windows-amd64-v3',
+    'win32-ia32': 'sparkle-service-windows-386',
+    'win32-arm64': 'sparkle-service-windows-arm64',
+    'darwin-x64': 'sparkle-service-darwin-amd64-v3',
+    'darwin-arm64': 'sparkle-service-darwin-arm64',
+    'linux-x64': 'sparkle-service-linux-amd64-v3',
+    'linux-arm64': 'sparkle-service-linux-arm64',
+    'linux-loong64': 'sparkle-service-linux-loong64-abi2'
   }
   if (!map[`${platform}-${arch}`]) {
     throw new Error(`unsupported platform "${platform}-${arch}"`)
@@ -291,8 +296,9 @@ const resolveSysproxy = () => {
   const ext = platform == 'win32' ? '.exe' : ''
 
   return resolveResource({
-    file: `sysproxy${ext}`,
-    downloadURL: `https://github.com/xishang0128/sysproxy-go/releases/download/pre-release/${base}${ext}`
+    file: `sparkle-service${ext}`,
+    downloadURL: `https://github.com/xishang0128/sparkle-service/releases/download/pre-release/${base}${ext}`,
+    needExecutable: true
   })
 }
 const resolveRunner = () =>
@@ -352,6 +358,28 @@ const resolveSubstoreFrontend = async () => {
   zip.extractAllTo(resDir, true)
   fs.renameSync(path.join(resDir, 'dist'), targetPath)
 
+  if (platform !== 'win32') {
+    try {
+      const fixPermissions = (dir) => {
+        const items = fs.readdirSync(dir, { withFileTypes: true })
+        for (const item of items) {
+          const fullPath = path.join(dir, item.name)
+          if (item.isDirectory()) {
+            fs.chmodSync(fullPath, 0o755)
+            fixPermissions(fullPath)
+          } else {
+            fs.chmodSync(fullPath, 0o644)
+          }
+        }
+      }
+      fs.chmodSync(targetPath, 0o755)
+      fixPermissions(targetPath)
+      console.log(`[INFO]: sub-store-frontend permissions fixed`)
+    } catch (error) {
+      console.warn(`[WARN]: Failed to fix permissions: ${error.message}`)
+    }
+  }
+
   console.log(`[INFO]: sub-store-frontend finished`)
 }
 const resolveFont = async () => {
@@ -398,10 +426,9 @@ const tasks = [
     winOnly: true
   },
   {
-    name: 'sysproxy',
-    func: resolveSysproxy,
+    name: 'sparkle-service',
+    func: resolveSparkleService,
     retry: 5
-    // winOnly: true
   },
   {
     name: 'runner',

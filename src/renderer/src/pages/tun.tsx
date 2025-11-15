@@ -12,7 +12,7 @@ import { useAppConfig } from '@renderer/hooks/use-app-config'
 const Tun: React.FC = () => {
   const { controledMihomoConfig, patchControledMihomoConfig } = useControledMihomoConfig()
   const { appConfig, patchAppConfig } = useAppConfig()
-  const { autoSetDNS = true } = appConfig || {}
+  const { autoSetDNSMode = 'exec' } = appConfig || {}
   const { tun } = controledMihomoConfig || {}
   const [loading, setLoading] = useState(false)
   const {
@@ -24,6 +24,7 @@ const Tun: React.FC = () => {
     'dns-hijack': dnsHijack = ['any:53'],
     'route-exclude-address': routeExcludeAddress = [],
     'strict-route': strictRoute = false,
+    'disable-icmp-forwarding': disableIcmpForwarding = false,
     mtu = 1500
   } = tun || {}
   const [changed, setChanged] = useState(false)
@@ -36,6 +37,7 @@ const Tun: React.FC = () => {
     dnsHijack,
     strictRoute,
     routeExcludeAddress,
+    disableIcmpForwarding,
     mtu
   })
   const setValues = (v: typeof values): void => {
@@ -70,6 +72,7 @@ const Tun: React.FC = () => {
                     'dns-hijack': values.dnsHijack,
                     'strict-route': values.strictRoute,
                     'route-exclude-address': values.routeExcludeAddress,
+                    'disable-icmp-forwarding': values.disableIcmpForwarding,
                     mtu: values.mtu
                   }
                 })
@@ -105,14 +108,19 @@ const Tun: React.FC = () => {
             </SettingItem>
           )}
           {platform === 'darwin' && (
-            <SettingItem title="自动设置系统DNS" divider>
-              <Switch
+            <SettingItem title="自动设置系统 DNS" divider>
+              <Tabs
                 size="sm"
-                isSelected={autoSetDNS}
-                onValueChange={async (v) => {
-                  await patchAppConfig({ autoSetDNS: v })
+                color="primary"
+                selectedKey={autoSetDNSMode}
+                onSelectionChange={async (key: Key) => {
+                  await patchAppConfig({ autoSetDNSMode: key as 'none' | 'exec' | 'service' })
                 }}
-              />
+              >
+                <Tab key="none" title="不自动设置" />
+                <Tab key="exec" title="执行命令" />
+                <Tab key="service" title="服务模式" />
+              </Tabs>
             </SettingItem>
           )}
           <SettingItem title="Tun 模式堆栈" divider>
@@ -170,12 +178,21 @@ const Tun: React.FC = () => {
               />
             </SettingItem>
           )}
-          <SettingItem title="自动选择流量出口接口" divider>
+          <SettingItem title="自动选择流量出口" divider>
             <Switch
               size="sm"
               isSelected={values.autoDetectInterface}
               onValueChange={(v) => {
                 setValues({ ...values, autoDetectInterface: v })
+              }}
+            />
+          </SettingItem>
+          <SettingItem title="ICMP 转发" divider>
+            <Switch
+              size="sm"
+              isSelected={!values.disableIcmpForwarding}
+              onValueChange={(v) => {
+                setValues({ ...values, disableIcmpForwarding: !v })
               }}
             />
           </SettingItem>

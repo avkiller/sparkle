@@ -41,7 +41,9 @@ export const defaultConfig: AppConfig = {
   disableSystemCA: false,
   disableNftables: false,
   safePaths: [],
-  disableGPU: process.platform === 'win32' && parseInt(os.release().split('.')[2], 10) <= 20000
+  disableGPU: process.platform === 'win32' && parseInt(os.release().split('.')[2], 10) <= 20000,
+  proxyDisplayLayout: 'double',
+  groupDisplayLayout: 'double'
 }
 
 export const defaultControledMihomoConfig: Partial<MihomoConfig> = {
@@ -65,7 +67,12 @@ export const defaultControledMihomoConfig: Partial<MihomoConfig> = {
   'tcp-concurrent': false,
   'log-level': 'info',
   'find-process-mode': 'always',
+  'interface-name': '',
   'bind-address': '*',
+  'keep-alive-idle': 0,
+  'keep-alive-interval': 0,
+  'disable-keep-alive': false,
+  'global-client-fingerprint': '',
   'lan-allowed-ips': ['0.0.0.0/0', '::/0'],
   'lan-disallowed-ips': [],
   authentication: [],
@@ -91,7 +98,7 @@ export const defaultControledMihomoConfig: Partial<MihomoConfig> = {
     'use-system-hosts': false,
     'default-nameserver': ['tls://223.5.5.5'],
     nameserver: ['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query'],
-    'proxy-server-nameserver': ['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query'],
+    'proxy-server-nameserver': [],
     'direct-nameserver': []
   },
   sniffer: {

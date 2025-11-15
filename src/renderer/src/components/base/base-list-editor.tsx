@@ -1,6 +1,7 @@
 import React from 'react'
-import { Button, Divider, Input } from '@heroui/react'
+import { Button, Divider, Input, Tooltip } from '@heroui/react'
 import { MdDeleteForever } from 'react-icons/md'
+import type { ValidationResult } from '@renderer/utils/validate'
 
 interface EditableListProps {
   title?: string
@@ -16,6 +17,9 @@ interface EditableListProps {
   disableFirst?: boolean
   divider?: boolean
   objectMode?: 'keyValue' | 'array' | 'record'
+  validate?: (part1: string, part2?: string) => boolean | ValidationResult
+  validatePart1?: (part1: string) => boolean | ValidationResult
+  validatePart2?: (part2: string) => boolean | ValidationResult
 }
 
 const EditableList: React.FC<EditableListProps> = ({
@@ -28,7 +32,10 @@ const EditableList: React.FC<EditableListProps> = ({
   format,
   disableFirst = false,
   divider = true,
-  objectMode
+  objectMode,
+  validate,
+  validatePart1,
+  validatePart2
 }) => {
   const isDual = !!parse && !!format
 
@@ -109,41 +116,116 @@ const EditableList: React.FC<EditableListProps> = ({
         {title && <h4 className="text-base font-medium">{title}</h4>}
         {displayed.map((entry, idx) => {
           const disabled = disableFirst && idx === 0
+          const isExtra = idx === processedItems.length
+          const isEmpty = !entry.part1.trim() && (!entry.part2 || !entry.part2.trim())
+
+          // 整体验证（向后兼容）
+          const rawValidation =
+            isExtra || isEmpty ? true : validate ? validate(entry.part1, entry.part2) : true
+          const validation: ValidationResult =
+            typeof rawValidation === 'boolean'
+              ? { ok: rawValidation, error: rawValidation ? undefined : '格式错误' }
+              : rawValidation
+
+          // part1 单独验证
+          const rawValidation1 =
+            isExtra || !entry.part1.trim()
+              ? true
+              : validatePart1
+                ? validatePart1(entry.part1)
+                : true
+          const validation1: ValidationResult =
+            typeof rawValidation1 === 'boolean'
+              ? { ok: rawValidation1, error: rawValidation1 ? undefined : '格式错误' }
+              : rawValidation1
+
+          // part2 单独验证
+          const rawValidation2 =
+            isExtra || !entry.part2?.trim()
+              ? true
+              : validatePart2
+                ? validatePart2(entry.part2)
+                : true
+          const validation2: ValidationResult =
+            typeof rawValidation2 === 'boolean'
+              ? { ok: rawValidation2, error: rawValidation2 ? undefined : '格式错误' }
+              : rawValidation2
+
+          // 使用单独验证优先，如果没有则使用整体验证
+          const part1Valid = validatePart1 ? validation1.ok : validation.ok
+          const part2Valid = validatePart2 ? validation2.ok : validation.ok
+          const part1Error = validatePart1 ? validation1.error : validation.error
+          const part2Error = validatePart2 ? validation2.error : validation.error
+
           return (
             <div key={idx} className="flex items-center space-x-2">
               {isDual || objectMode ? (
                 <>
                   <div className="w-1/3">
-                    <Input
-                      size="sm"
-                      fullWidth
-                      disabled={disabled}
-                      placeholder={placeholder}
-                      value={entry.part1}
-                      onValueChange={(v) => handleUpdate(idx, v, entry.part2)}
-                    />
+                    <Tooltip
+                      content={part1Error ?? '格式错误'}
+                      placement="left"
+                      isOpen={!part1Valid}
+                      showArrow={true}
+                      color="danger"
+                      offset={10}
+                    >
+                      <Input
+                        size="sm"
+                        fullWidth
+                        className={
+                          part1Valid ? '' : 'border-red-500 ring-1 ring-red-500 rounded-lg'
+                        }
+                        disabled={disabled}
+                        placeholder={placeholder}
+                        value={entry.part1}
+                        onValueChange={(v) => handleUpdate(idx, v, entry.part2)}
+                      />
+                    </Tooltip>
                   </div>
                   <span className="mx-1">:</span>
                   <div className="flex-1">
-                    <Input
-                      size="sm"
-                      fullWidth
-                      disabled={disabled}
-                      placeholder={part2Placeholder}
-                      value={entry.part2 || ''}
-                      onValueChange={(v) => handleUpdate(idx, entry.part1, v)}
-                    />
+                    <Tooltip
+                      content={part2Error ?? '格式错误'}
+                      placement="left"
+                      isOpen={!part2Valid}
+                      showArrow={true}
+                      color="danger"
+                      offset={10}
+                    >
+                      <Input
+                        size="sm"
+                        fullWidth
+                        className={
+                          part2Valid ? '' : 'border-red-500 ring-1 ring-red-500 rounded-lg'
+                        }
+                        disabled={disabled}
+                        placeholder={part2Placeholder}
+                        value={entry.part2 || ''}
+                        onValueChange={(v) => handleUpdate(idx, entry.part1, v)}
+                      />
+                    </Tooltip>
                   </div>
                 </>
               ) : (
-                <Input
-                  size="sm"
-                  fullWidth
-                  disabled={disabled}
-                  placeholder={placeholder}
-                  value={entry.part1}
-                  onValueChange={(v) => handleUpdate(idx, v)}
-                />
+                <Tooltip
+                  content={part1Error ?? '格式错误'}
+                  placement="left"
+                  isOpen={!part1Valid}
+                  showArrow={true}
+                  color="danger"
+                  offset={10}
+                >
+                  <Input
+                    size="sm"
+                    fullWidth
+                    className={part1Valid ? '' : 'border-red-500 ring-1 ring-red-500 rounded-lg'}
+                    disabled={disabled}
+                    placeholder={placeholder}
+                    value={entry.part1}
+                    onValueChange={(v) => handleUpdate(idx, v)}
+                  />
+                </Tooltip>
               )}
               {idx < processedItems.length && !disabled && (
                 <Button

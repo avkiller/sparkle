@@ -62,6 +62,7 @@ interface MihomoTunConfig {
   device?: string
   mtu?: number
   'strict-route'?: boolean
+  'disable-icmp-forwarding'?: boolean
   gso?: boolean
   'gso-max-size'?: number
   'udp-timeout'?: number
@@ -91,6 +92,7 @@ interface MihomoDNSConfig {
   'prefer-h3'?: boolean
   'enhanced-mode'?: DnsMode
   'fake-ip-range'?: string
+  'fake-ip-range6'?: string
   'fake-ip-filter'?: string[]
   'fake-ip-filter-mode'?: FilterMode
   'use-hosts'?: boolean

@@ -225,16 +225,66 @@ export async function triggerSysProxy(enable: boolean, onlyActiveDevice: boolean
   )
 }
 
-export async function restartHelper(): Promise<void> {
-  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('restartHelper'))
+export async function manualGrantCorePermition(
+  cores?: ('mihomo' | 'mihomo-alpha')[]
+): Promise<void> {
+  return ipcErrorWrapper(
+    await window.electron.ipcRenderer.invoke('manualGrantCorePermition', cores)
+  )
 }
 
-export async function isHelperInstalled(): Promise<boolean> {
-  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('isHelperInstalled'))
+export async function checkCorePermission(): Promise<{ mihomo: boolean; 'mihomo-alpha': boolean }> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('checkCorePermission'))
 }
 
-export async function manualGrantCorePermition(): Promise<void> {
-  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('manualGrantCorePermition'))
+export async function checkElevateTask(): Promise<boolean> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('checkElevateTask'))
+}
+
+export async function deleteElevateTask(): Promise<void> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('deleteElevateTask'))
+}
+
+export async function revokeCorePermission(cores?: ('mihomo' | 'mihomo-alpha')[]): Promise<void> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('revokeCorePermission', cores))
+}
+
+export async function serviceStatus(): Promise<
+  'running' | 'stopped' | 'not-installed' | 'unknown'
+> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('serviceStatus'))
+}
+
+export async function testServiceConnection(): Promise<boolean> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('testServiceConnection'))
+}
+
+export async function initService(): Promise<void> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('initService'))
+}
+
+export async function installService(): Promise<void> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('installService'))
+}
+
+export async function uninstallService(): Promise<void> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('uninstallService'))
+}
+
+export async function startService(): Promise<void> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('startService'))
+}
+
+export async function restartService(): Promise<void> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('restartService'))
+}
+
+export async function stopService(): Promise<void> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('stopService'))
+}
+
+export async function findSystemMihomo(): Promise<string[]> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('findSystemMihomo'))
 }
 
 export async function getFilePath(ext: string[]): Promise<string[] | undefined> {
@@ -337,6 +387,10 @@ export async function quitWithoutCore(): Promise<void> {
 
 export async function quitApp(): Promise<void> {
   return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('quitApp'))
+}
+
+export async function notDialogQuit(): Promise<void> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('notDialogQuit'))
 }
 
 export async function setNativeTheme(theme: 'system' | 'light' | 'dark'): Promise<void> {

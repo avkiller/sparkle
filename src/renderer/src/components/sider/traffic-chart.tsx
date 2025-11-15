@@ -24,27 +24,7 @@ const TrafficChart: React.FC<TrafficChartProps> = (props) => {
   }, [data])
 
   const chartColor = useMemo(() => {
-    try {
-      if (!document?.documentElement) {
-        return 'rgba(255,255,255,0.5)'
-      }
-
-      const computedStyle = getComputedStyle(document.documentElement)
-      const colorProperty = isActive ? '--heroui-primary-foreground' : '--heroui-foreground'
-
-      const colorValue = computedStyle.getPropertyValue(colorProperty)
-
-      if (colorValue && colorValue.trim()) {
-        const color = `hsla(${colorValue.trim()})`
-        if (color.includes('hsla') || color.includes('rgba')) {
-          return color
-        }
-      }
-    } catch (error) {
-      console.warn('Chart color calculation failed:', error)
-    }
-
-    return isActive ? 'rgba(255,255,255,0.6)' : 'rgba(156,163,175,0.6)'
+    return isActive ? 'hsl(var(--heroui-primary-foreground))' : 'hsl(var(--heroui-foreground))'
   }, [isActive])
 
   return (

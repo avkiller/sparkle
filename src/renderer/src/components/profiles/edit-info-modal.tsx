@@ -37,14 +37,18 @@ const EditInfoModal: React.FC<Props> = (props) => {
 
   const onSave = async (): Promise<void> => {
     try {
-      await updateProfileItem({
+      const itemToSave = {
         ...values,
         override: values.override?.filter(
           (i) =>
             overrideItems.find((t) => t.id === i) && !overrideItems.find((t) => t.id === i)?.global
         )
-      })
-      await restartCore()
+      }
+
+      await updateProfileItem(itemToSave)
+      if (item.id) {
+        await restartCore()
+      }
       onClose()
     } catch (e) {
       alert(e)
@@ -66,7 +70,7 @@ const EditInfoModal: React.FC<Props> = (props) => {
       scrollBehavior="inside"
     >
       <ModalContent>
-        <ModalHeader className="flex app-drag">编辑信息</ModalHeader>
+        <ModalHeader className="flex app-drag">{item.id ? '编辑信息' : '导入远程配置'}</ModalHeader>
         <ModalBody>
           <SettingItem title="名称">
             <Input
@@ -90,6 +94,35 @@ const EditInfoModal: React.FC<Props> = (props) => {
                   }}
                 />
               </SettingItem>
+              <SettingItem title="证书指纹">
+                <Input
+                  size="sm"
+                  className={cn(inputWidth)}
+                  value={values.fingerprint ?? ''}
+                  onValueChange={(v) => {
+                    setValues({ ...values, fingerprint: v.trim() || undefined })
+                  }}
+                />
+              </SettingItem>
+              <SettingItem title="指定 UA">
+                <Input
+                  size="sm"
+                  className={cn(inputWidth)}
+                  value={values.ua ?? ''}
+                  onValueChange={(v) => {
+                    setValues({ ...values, ua: v.trim() || undefined })
+                  }}
+                />
+              </SettingItem>
+              <SettingItem title="验证订阅格式">
+                <Switch
+                  size="sm"
+                  isSelected={values.verify ?? false}
+                  onValueChange={(v) => {
+                    setValues({ ...values, verify: v })
+                  }}
+                />
+              </SettingItem>
               <SettingItem title="使用代理更新">
                 <Switch
                   size="sm"
@@ -108,6 +141,7 @@ const EditInfoModal: React.FC<Props> = (props) => {
                   onValueChange={(v) => {
                     setValues({ ...values, interval: parseInt(v) })
                   }}
+                  disabled={values.locked}
                 />
               </SettingItem>
             </>
@@ -180,7 +214,7 @@ const EditInfoModal: React.FC<Props> = (props) => {
             取消
           </Button>
           <Button size="sm" color="primary" onPress={onSave}>
-            保存
+            {item.id ? '保存' : '导入'}
           </Button>
         </ModalFooter>
       </ModalContent>

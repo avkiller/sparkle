@@ -61,11 +61,15 @@ import {
   quitWithoutCore,
   restartCore,
   startNetworkDetection,
-  stopNetworkDetection
+  stopNetworkDetection,
+  revokeCorePermission,
+  checkCorePermission
 } from '../core/manager'
-import { isHelperInstalled, restartHelper, triggerSysProxy } from '../sys/sysproxy'
+import { triggerSysProxy } from '../sys/sysproxy'
 import { checkUpdate, downloadAndInstallUpdate, cancelUpdate } from '../resolve/autoUpdater'
 import {
+  checkElevateTask,
+  deleteElevateTask,
   getFilePath,
   openFile,
   openUWPTool,
@@ -74,6 +78,17 @@ import {
   setNativeTheme,
   setupFirewall
 } from '../sys/misc'
+import {
+  serviceStatus,
+  installService,
+  uninstallService,
+  startService,
+  stopService,
+  initService,
+  testServiceConnection,
+  restartService
+} from '../service/manager'
+import { findSystemMihomo } from '../utils/dirs'
 import {
   getRuntimeConfig,
   getRuntimeConfigStr,
@@ -85,7 +100,13 @@ import { listWebdavBackups, webdavBackup, webdavDelete, webdavRestore } from '..
 import { getInterfaces } from '../sys/interface'
 import { closeTrayIcon, copyEnv, showTrayIcon } from '../resolve/tray'
 import { registerShortcut } from '../resolve/shortcut'
-import { closeMainWindow, mainWindow, setNotQuit, showMainWindow, triggerMainWindow } from '..'
+import {
+  closeMainWindow,
+  mainWindow,
+  setNotQuitDialog,
+  showMainWindow,
+  triggerMainWindow
+} from '..'
 import {
   applyTheme,
   fetchThemes,
@@ -99,7 +120,7 @@ import { logDir } from './dirs'
 import path from 'path'
 import v8 from 'v8'
 import { getGistUrl } from '../resolve/gistApi'
-import { getIconDataURL, getImageDataURL } from './image'
+import { getIconDataURL, getImageDataURL } from './icon'
 import { startMonitor } from '../resolve/trafficMonitor'
 import { closeFloatingWindow, showContextMenu, showFloatingWindow } from '../resolve/floatingWindow'
 import { getAppName } from './appName'
@@ -195,9 +216,24 @@ export function registerIpcMainHandlers(): void {
   ipcMain.handle('triggerSysProxy', (_e, enable, onlyActiveDevice) =>
     ipcErrorWrapper(triggerSysProxy)(enable, onlyActiveDevice)
   )
-  ipcMain.handle('restartHelper', ipcErrorWrapper(restartHelper))
-  ipcMain.handle('isHelperInstalled', ipcErrorWrapper(isHelperInstalled))
-  ipcMain.handle('manualGrantCorePermition', () => ipcErrorWrapper(manualGrantCorePermition)())
+  ipcMain.handle('manualGrantCorePermition', (_e, cores?: ('mihomo' | 'mihomo-alpha')[]) =>
+    ipcErrorWrapper(manualGrantCorePermition)(cores)
+  )
+  ipcMain.handle('checkCorePermission', () => ipcErrorWrapper(checkCorePermission)())
+  ipcMain.handle('revokeCorePermission', (_e, cores?: ('mihomo' | 'mihomo-alpha')[]) =>
+    ipcErrorWrapper(revokeCorePermission)(cores)
+  )
+  ipcMain.handle('checkElevateTask', () => ipcErrorWrapper(checkElevateTask)())
+  ipcMain.handle('deleteElevateTask', () => ipcErrorWrapper(deleteElevateTask)())
+  ipcMain.handle('serviceStatus', () => ipcErrorWrapper(serviceStatus)())
+  ipcMain.handle('testServiceConnection', () => ipcErrorWrapper(testServiceConnection)())
+  ipcMain.handle('initService', () => ipcErrorWrapper(initService)())
+  ipcMain.handle('installService', () => ipcErrorWrapper(installService)())
+  ipcMain.handle('uninstallService', () => ipcErrorWrapper(uninstallService)())
+  ipcMain.handle('startService', () => ipcErrorWrapper(startService)())
+  ipcMain.handle('restartService', () => ipcErrorWrapper(restartService)())
+  ipcMain.handle('stopService', () => ipcErrorWrapper(stopService)())
+  ipcMain.handle('findSystemMihomo', () => findSystemMihomo())
   ipcMain.handle('getFilePath', (_e, ext) => getFilePath(ext))
   ipcMain.handle('readTextFile', (_e, filePath) => ipcErrorWrapper(readTextFile)(filePath))
   ipcMain.handle('getRuntimeConfigStr', ipcErrorWrapper(getRuntimeConfigStr))
@@ -280,7 +316,7 @@ export function registerIpcMainHandlers(): void {
   })
   ipcMain.handle('resetAppConfig', resetAppConfig)
   ipcMain.handle('relaunchApp', () => {
-    setNotQuit()
+    setNotQuitDialog()
     app.relaunch()
     app.quit()
   })
@@ -288,4 +324,8 @@ export function registerIpcMainHandlers(): void {
   ipcMain.handle('startNetworkDetection', ipcErrorWrapper(startNetworkDetection))
   ipcMain.handle('stopNetworkDetection', ipcErrorWrapper(stopNetworkDetection))
   ipcMain.handle('quitApp', () => app.quit())
+  ipcMain.handle('notDialogQuit', () => {
+    setNotQuitDialog()
+    app.quit()
+  })
 }

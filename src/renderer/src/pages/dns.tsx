@@ -1,12 +1,19 @@
-import { Button, Tab, Input, Switch, Tabs } from '@heroui/react'
+import { Button, Tab, Input, Switch, Tabs, Tooltip } from '@heroui/react'
 import BasePage from '@renderer/components/base/base-page'
 import SettingCard from '@renderer/components/base/base-setting-card'
 import SettingItem from '@renderer/components/base/base-setting-item'
 import EditableList from '@renderer/components/base/base-list-editor'
+import AdvancedDnsSetting from '@renderer/components/dns/advanced-dns-setting'
 import { useControledMihomoConfig } from '@renderer/hooks/use-controled-mihomo-config'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
 import { restartCore } from '@renderer/utils/ipc'
 import React, { Key, useState } from 'react'
+import {
+  isValidIPv4Cidr,
+  isValidIPv6Cidr,
+  isValidDomainWildcard,
+  isValidDnsServer
+} from '@renderer/utils/validate'
 
 const DNS: React.FC = () => {
   const { controledMihomoConfig, patchControledMihomoConfig } = useControledMihomoConfig()
@@ -16,6 +23,7 @@ const DNS: React.FC = () => {
   const {
     ipv6 = false,
     'fake-ip-range': fakeIPRange = '198.18.0.1/16',
+    'fake-ip-range6': fakeIPRange6 = '',
     'fake-ip-filter': fakeIPFilter = [
       '*',
       '+.lan',
@@ -30,10 +38,7 @@ const DNS: React.FC = () => {
     'respect-rules': respectRules = false,
     'default-nameserver': defaultNameserver = ['tls://223.5.5.5'],
     nameserver = ['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query'],
-    'proxy-server-nameserver': proxyServerNameserver = [
-      'https://doh.pub/dns-query',
-      'https://dns.alidns.com/dns-query'
-    ],
+    'proxy-server-nameserver': proxyServerNameserver = [],
     'direct-nameserver': directNameserver = [],
     'nameserver-policy': nameserverPolicy = {}
   } = dns || {}
@@ -43,6 +48,7 @@ const DNS: React.FC = () => {
     useHosts,
     enhancedMode,
     fakeIPRange,
+    fakeIPRange6,
     fakeIPFilter,
     useSystemHosts,
     respectRules,
@@ -53,6 +59,31 @@ const DNS: React.FC = () => {
     nameserverPolicy,
     hosts: useHosts ? hosts : undefined
   })
+  const [fakeIPRangeError, setFakeIPRangeError] = useState<string | null>(() => {
+    const r = isValidIPv4Cidr(fakeIPRange)
+    return r.ok ? null : (r.error ?? '格式错误')
+  })
+  const [fakeIPRange6Error, setFakeIPRange6Error] = useState<string | null>(() => {
+    const r = isValidIPv6Cidr(fakeIPRange6)
+    return r.ok ? null : (r.error ?? '格式错误')
+  })
+  const [fakeIPFilterError, setFakeIPFilterError] = useState<string | null>(() => {
+    if (!Array.isArray(fakeIPFilter)) return null
+    const firstInvalid = fakeIPFilter.find((f) => !isValidDomainWildcard(f).ok)
+    return firstInvalid ? (isValidDomainWildcard(firstInvalid).error ?? '格式错误') : null
+  })
+  const [defaultNameserverError, setDefaultNameserverError] = useState<string | null>(() => {
+    if (!Array.isArray(defaultNameserver)) return null
+    const firstInvalid = defaultNameserver.find((f) => !isValidDnsServer(f, true).ok)
+    return firstInvalid ? (isValidDnsServer(firstInvalid, true).error ?? '格式错误') : null
+  })
+  const [nameserverError, setNameserverError] = useState<string | null>(() => {
+    if (!Array.isArray(nameserver)) return null
+    const firstInvalid = nameserver.find((f) => !isValidDnsServer(f).ok)
+    return firstInvalid ? (isValidDnsServer(firstInvalid).error ?? '格式错误') : null
+  })
+  const [advancedDnsError, setAdvancedDnsError] = useState(false)
+  const hasDnsErrors = Boolean(defaultNameserverError || nameserverError || advancedDnsError)
 
   const setValues = (v: typeof values): void => {
     originSetValues(v)
@@ -81,6 +112,14 @@ const DNS: React.FC = () => {
             size="sm"
             className="app-nodrag"
             color="primary"
+            isDisabled={
+              values && values.enhancedMode === 'fake-ip'
+                ? Boolean(fakeIPRangeError) ||
+                  (values.ipv6 && Boolean(fakeIPRange6Error)) ||
+                  Boolean(fakeIPFilterError) ||
+                  hasDnsErrors
+                : hasDnsErrors
+            }
             onPress={() => {
               const hostsObject =
                 values.useHosts && values.hosts && values.hosts.length > 0
@@ -89,6 +128,7 @@ const DNS: React.FC = () => {
               const dnsConfig = {
                 ipv6: values.ipv6,
                 'fake-ip-range': values.fakeIPRange,
+                'fake-ip-range6': values.fakeIPRange6,
                 'fake-ip-filter': values.fakeIPFilter,
                 'enhanced-mode': values.enhancedMode,
                 'use-hosts': values.useHosts,
@@ -121,19 +161,6 @@ const DNS: React.FC = () => {
             }}
           />
         </SettingItem>
-        <SettingItem title="连接遵守规则" divider>
-          <Switch
-            size="sm"
-            isSelected={values.respectRules}
-            isDisabled={values.proxyServerNameserver.length === 0}
-            onValueChange={(v) => {
-              setValues({
-                ...values,
-                respectRules: values.proxyServerNameserver.length === 0 ? false : v
-              })
-            }}
-          />
-        </SettingItem>
         <SettingItem title="域名映射模式" divider>
           <Tabs
             size="sm"
@@ -148,20 +175,70 @@ const DNS: React.FC = () => {
         </SettingItem>
         {values.enhancedMode === 'fake-ip' && (
           <>
-            <SettingItem title="回应范围" divider>
-              <Input
-                size="sm"
-                className="w-[50%]"
-                value={values.fakeIPRange}
-                onValueChange={(v) => {
-                  setValues({ ...values, fakeIPRange: v })
-                }}
-              />
+            <SettingItem title="虚假 IP 范围 (IPv4)" divider>
+              <Tooltip
+                content={fakeIPRangeError}
+                placement="right"
+                isOpen={!!fakeIPRangeError}
+                showArrow={true}
+                color="danger"
+                offset={15}
+              >
+                <Input
+                  size="sm"
+                  className={
+                    `w-[40%] ` +
+                    (fakeIPRangeError ? 'border-red-500 ring-1 ring-red-500 rounded-lg' : '')
+                  }
+                  placeholder="例：198.18.0.1/16"
+                  value={values.fakeIPRange}
+                  onValueChange={(v) => {
+                    setValues({ ...values, fakeIPRange: v })
+                    const r = isValidIPv4Cidr(v)
+                    setFakeIPRangeError(r.ok ? null : (r.error ?? '格式错误'))
+                  }}
+                />
+              </Tooltip>
             </SettingItem>
+            {values.ipv6 && (
+              <SettingItem title="虚假 IP 范围 (IPv6)" divider>
+                <Tooltip
+                  content={fakeIPRange6Error}
+                  placement="right"
+                  isOpen={!!fakeIPRange6Error}
+                  showArrow={true}
+                  color="danger"
+                  offset={10}
+                >
+                  <Input
+                    size="sm"
+                    className={
+                      `w-[40%] ` +
+                      (fakeIPRange6Error ? 'border-red-500 ring-1 ring-red-500 rounded-lg' : '')
+                    }
+                    placeholder="例：fc00::/18"
+                    value={values.fakeIPRange6}
+                    onValueChange={(v) => {
+                      setValues({ ...values, fakeIPRange6: v })
+                      const r = isValidIPv6Cidr(v)
+                      setFakeIPRange6Error(r.ok ? null : (r.error ?? '格式错误'))
+                    }}
+                  />
+                </Tooltip>
+              </SettingItem>
+            )}
             <EditableList
               title="虚假 IP 过滤器"
               items={values.fakeIPFilter}
-              onChange={(list) => setValues({ ...values, fakeIPFilter: list as string[] })}
+              validate={(part) => isValidDomainWildcard(part as string)}
+              onChange={(list) => {
+                const arr = list as string[]
+                setValues({ ...values, fakeIPFilter: arr })
+                const firstInvalid = arr.find((f) => !isValidDomainWildcard(f).ok)
+                setFakeIPFilterError(
+                  firstInvalid ? (isValidDomainWildcard(firstInvalid).error ?? '格式错误') : null
+                )
+              }}
               placeholder="例：+.lan"
             />
           </>
@@ -169,85 +246,65 @@ const DNS: React.FC = () => {
         <EditableList
           title="基础服务器"
           items={values.defaultNameserver}
-          onChange={(list) => setValues({ ...values, defaultNameserver: list as string[] })}
-          placeholder="例：223.5.5.5，仅支持 IP"
+          validate={(part) => isValidDnsServer(part as string, true)}
+          onChange={(list) => {
+            const arr = list as string[]
+            setValues({ ...values, defaultNameserver: arr })
+            const firstInvalid = arr.find((f) => !isValidDnsServer(f, true).ok)
+            setDefaultNameserverError(
+              firstInvalid ? (isValidDnsServer(firstInvalid, true).error ?? '格式错误') : null
+            )
+          }}
+          placeholder="例：223.5.5.5"
         />
         <EditableList
           title="默认解析服务器"
           items={values.nameserver}
-          onChange={(list) => setValues({ ...values, nameserver: list as string[] })}
-          placeholder="例：tls://dns.alidns.com"
-        />
-        <EditableList
-          title="直连解析服务器"
-          items={values.directNameserver}
-          onChange={(list) => setValues({ ...values, directNameserver: list as string[] })}
-          placeholder="例：tls://dns.alidns.com"
-        />
-        <EditableList
-          title="代理节点解析服务器"
-          items={values.proxyServerNameserver}
-          onChange={(list) =>
-            setValues({
-              ...values,
-              proxyServerNameserver: list as string[],
-              respectRules: (list as string[]).length === 0 ? false : values.respectRules
-            })
-          }
-          placeholder="例：tls://dns.alidns.com"
-        />
-        <EditableList
-          title="域名解析策略"
-          items={values.nameserverPolicy}
-          onChange={(newValue) => {
-            setValues({
-              ...values,
-              nameserverPolicy: newValue as { [key: string]: string | string[] }
-            })
+          validate={(part) => isValidDnsServer(part as string)}
+          onChange={(list) => {
+            const arr = list as string[]
+            setValues({ ...values, nameserver: arr })
+            const firstInvalid = arr.find((f) => !isValidDnsServer(f).ok)
+            setNameserverError(
+              firstInvalid ? (isValidDnsServer(firstInvalid).error ?? '格式错误') : null
+            )
           }}
-          placeholder="域名"
-          part2Placeholder="DNS 服务器，用逗号分隔"
-          objectMode="record"
+          placeholder="例：tls://dns.alidns.com"
+          divider={false}
         />
-        <SettingItem title="使用系统 Hosts" divider>
-          <Switch
-            size="sm"
-            isSelected={values.useSystemHosts}
-            onValueChange={(v) => {
-              setValues({ ...values, useSystemHosts: v })
-            }}
-          />
-        </SettingItem>
-        <SettingItem title="自定义 Hosts">
-          <Switch
-            size="sm"
-            isSelected={values.useHosts}
-            onValueChange={(v) => {
-              setValues({ ...values, useHosts: v })
-            }}
-          />
-        </SettingItem>
-        {values.useHosts && (
-          <EditableList
-            items={
-              values.hosts ? Object.fromEntries(values.hosts.map((h) => [h.domain, h.value])) : {}
-            }
-            onChange={(rec) => {
-              const hostArr: IHost[] = Object.entries(rec as Record<string, string | string[]>).map(
-                ([domain, value]) => ({
-                  domain,
-                  value: value as string | string[]
-                })
-              )
-              setValues({ ...values, hosts: hostArr })
-            }}
-            placeholder="域名"
-            part2Placeholder="域名或 IP，用逗号分隔多个值"
-            objectMode="record"
-            divider={false}
-          />
-        )}
       </SettingCard>
+      <AdvancedDnsSetting
+        respectRules={values.respectRules}
+        directNameserver={values.directNameserver}
+        proxyServerNameserver={values.proxyServerNameserver}
+        nameserverPolicy={values.nameserverPolicy}
+        hosts={values.hosts}
+        useHosts={values.useHosts}
+        useSystemHosts={values.useSystemHosts}
+        onRespectRulesChange={(v) => {
+          setValues({
+            ...values,
+            respectRules: values.proxyServerNameserver.length === 0 ? false : v
+          })
+        }}
+        onDirectNameserverChange={(arr) => {
+          setValues({ ...values, directNameserver: arr })
+        }}
+        onProxyNameserverChange={(arr) => {
+          setValues({
+            ...values,
+            proxyServerNameserver: arr,
+            respectRules: arr.length === 0 ? false : values.respectRules
+          })
+        }}
+        onNameserverPolicyChange={(newValue) => {
+          setValues({ ...values, nameserverPolicy: newValue })
+        }}
+        onUseSystemHostsChange={(v) => setValues({ ...values, useSystemHosts: v })}
+        onUseHostsChange={(v) => setValues({ ...values, useHosts: v })}
+        onHostsChange={(hostArr) => setValues({ ...values, hosts: hostArr })}
+        onErrorChange={setAdvancedDnsError}
+      />
     </BasePage>
   )
 }

@@ -1,9 +1,9 @@
-import { ChildProcess, exec, execFile, spawn } from 'child_process'
+import { ChildProcess, execFile, execFileSync, spawn } from 'child_process'
 import {
   dataDir,
   logPath,
-  mihomoCoreDir,
   mihomoCorePath,
+  mihomoIpcPath,
   mihomoProfileWorkDir,
   mihomoTestDir,
   mihomoWorkConfigPath,
@@ -27,9 +27,9 @@ import {
   stopMihomoTraffic,
   stopMihomoLogs,
   stopMihomoMemory,
-  patchMihomoConfig
+  patchMihomoConfig,
+  mihomoGroups
 } from './mihomoApi'
-import chokidar from 'chokidar'
 import { readFile, rm, writeFile } from 'fs/promises'
 import { promisify } from 'util'
 import { mainWindow } from '..'
@@ -39,19 +39,31 @@ import { createWriteStream, existsSync } from 'fs'
 import { uploadRuntimeConfig } from '../resolve/gistApi'
 import { startMonitor } from '../resolve/trafficMonitor'
 import { disableSysProxy, triggerSysProxy } from '../sys/sysproxy'
+import { getAxios } from './mihomoApi'
+import { setSysDns } from '../service/api'
 
-chokidar.watch(path.join(mihomoCoreDir(), 'meta-update'), {}).on('unlinkDir', async () => {
-  try {
-    await stopCore(true)
-    await startCore()
-  } catch (e) {
-    dialog.showErrorBox('内核启动出错', `${e}`)
-  }
-})
-
-export const mihomoIpcPath =
-  process.platform === 'win32' ? '\\\\.\\pipe\\Sparkle\\mihomo' : '/tmp/sparkle.sock'
 const ctlParam = process.platform === 'win32' ? '-ext-ctl-pipe' : '-ext-ctl-unix'
+
+class UserCancelledError extends Error {
+  constructor(message = '用户取消操作') {
+    super(message)
+    this.name = 'UserCancelledError'
+  }
+}
+
+function isUserCancelledError(error: unknown): boolean {
+  if (error instanceof UserCancelledError) {
+    return true
+  }
+  const errorMsg = error instanceof Error ? error.message : String(error)
+  return (
+    errorMsg.includes('用户已取消') ||
+    errorMsg.includes('User canceled') ||
+    errorMsg.includes('(-128)') ||
+    errorMsg.includes('user cancelled') ||
+    errorMsg.includes('dismissed')
+  )
+}
 
 let setPublicDNSTimer: NodeJS.Timeout | null = null
 let recoverDNSTimer: NodeJS.Timeout | null = null
@@ -64,7 +76,7 @@ let retry = 10
 export async function startCore(detached = false): Promise<Promise<void>[]> {
   const {
     core = 'mihomo',
-    autoSetDNS = true,
+    autoSetDNSMode = 'exec',
     diffWorkDir = false,
     mihomoCpuPriority = 'PRIORITY_NORMAL',
     disableLoopbackDetector = false,
@@ -74,23 +86,24 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
     safePaths = []
   } = await getAppConfig()
   const { 'log-level': logLevel } = await getControledMihomoConfig()
-  if (existsSync(path.join(dataDir(), 'core.pid'))) {
-    const pid = parseInt(await readFile(path.join(dataDir(), 'core.pid'), 'utf-8'))
-    try {
-      process.kill(pid, 'SIGINT')
-    } catch {
-      // ignore
-    } finally {
-      await rm(path.join(dataDir(), 'core.pid'))
-    }
-  }
   const { current } = await getProfileConfig()
   const { tun } = await getControledMihomoConfig()
-  const corePath = mihomoCorePath(core)
+
+  let corePath: string
+  try {
+    corePath = mihomoCorePath(core)
+  } catch (error) {
+    if (core === 'system') {
+      await patchAppConfig({ core: 'mihomo' })
+      return startCore(detached)
+    }
+    throw error
+  }
+
   await generateProfile()
   await checkProfile()
   await stopCore()
-  if (tun?.enable && autoSetDNS) {
+  if (tun?.enable && autoSetDNSMode !== 'none') {
     try {
       await setPublicDNS()
     } catch (error) {
@@ -113,12 +126,18 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
     DISABLE_EMBED_CA: String(disableEmbedCA),
     DISABLE_SYSTEM_CA: String(disableSystemCA),
     DISABLE_NFTABLES: String(disableNftables),
-    SAFE_PATHS: safePaths.join(path.delimiter)
+    SAFE_PATHS: safePaths.join(path.delimiter),
+    PATH: process.env.PATH
   }
   let initialized = false
   child = spawn(
     corePath,
-    ['-d', diffWorkDir ? mihomoProfileWorkDir(current) : mihomoWorkDir(), ctlParam, mihomoIpcPath],
+    [
+      '-d',
+      diffWorkDir ? mihomoProfileWorkDir(current) : mihomoWorkDir(),
+      ctlParam,
+      mihomoIpcPath()
+    ],
     {
       detached: detached,
       stdio: detached ? 'ignore' : undefined,
@@ -151,13 +170,6 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
   return new Promise((resolve, reject) => {
     child.stdout?.on('data', async (data) => {
       const str = data.toString()
-      if (str.includes('configure tun interface: operation not permitted')) {
-        patchControledMihomoConfig({ tun: { enable: false } })
-        mainWindow?.webContents.send('controledMihomoConfigUpdated')
-        ipcMain.emit('updateTrayMenu')
-        reject('虚拟网卡启动失败，请尝试手动授予内核权限')
-      }
-
       if (
         (process.platform !== 'win32' && str.includes('External controller unix listen error')) ||
         (process.platform === 'win32' && str.includes('External controller pipe listen error'))
@@ -165,17 +177,38 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
         reject(`控制器监听错误:\n${str}`)
       }
 
+      if (process.platform === 'win32' && str.includes('updater: finished')) {
+        try {
+          await stopCore(true)
+          const promises = await startCore()
+          await Promise.all(promises)
+        } catch (e) {
+          dialog.showErrorBox('内核启动出错', `${e}`)
+        }
+      }
+
       if (
         (process.platform !== 'win32' && str.includes('RESTful API unix listening at')) ||
         (process.platform === 'win32' && str.includes('RESTful API pipe listening at'))
       ) {
         resolve([
-          new Promise((resolve) => {
+          new Promise((resolve, reject) => {
             const handleProviderInitialization = async (logLine: string): Promise<void> => {
               for (const match of logLine.matchAll(
                 /Start initial provider ([\w\-!@#$%^&*()\p{Script=Han}]+)/gu
               )) {
                 matchedProviders.add(match[1])
+              }
+
+              if (
+                logLine.includes(
+                  'Start TUN listening error: configure tun interface: Connect: operation not permitted'
+                )
+              ) {
+                patchControledMihomoConfig({ tun: { enable: false } })
+                mainWindow?.webContents.send('controledMihomoConfigUpdated')
+                ipcMain.emit('updateTrayMenu')
+                reject('虚拟网卡启动失败，前往内核设置页尝试手动授予内核权限')
               }
 
               const isDefaultProvider = logLine.includes(
@@ -185,15 +218,31 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
                 providerNames.size > 0 && matchedProviders.size === providerNames.size
 
               if ((providerNames.size === 0 && isDefaultProvider) || isAllProvidersMatched) {
-                const delay = providerNames.size === 0 ? 100 : 500
+                matchedProviders.clear()
+
+                const waitForMihomoReady = async (): Promise<void> => {
+                  const maxRetries = 30
+                  const retryInterval = 100
+
+                  for (let i = 0; i < maxRetries; i++) {
+                    try {
+                      await mihomoGroups()
+                      break
+                    } catch (error) {
+                      await new Promise((r) => setTimeout(r, retryInterval))
+                    }
+                  }
+                }
+
+                await waitForMihomoReady()
                 initialized = true
                 Promise.all([
-                  new Promise((r) => setTimeout(r, delay)).then(() => {
+                  new Promise((r) => setTimeout(r, 100)).then(() => {
                     mainWindow?.webContents.send('groupsUpdated')
                     mainWindow?.webContents.send('rulesUpdated')
                   }),
                   uploadRuntimeConfig(),
-                  new Promise((r) => setTimeout(r, delay)).then(() =>
+                  new Promise((r) => setTimeout(r, 100)).then(() =>
                     patchMihomoConfig({ 'log-level': logLevel })
                   )
                 ]).then(() => resolve())
@@ -227,19 +276,116 @@ export async function stopCore(force = false): Promise<void> {
     })
   }
 
-  if (child) {
-    child.removeAllListeners()
-    child.kill('SIGINT')
-  }
   stopMihomoTraffic()
   stopMihomoConnections()
   stopMihomoLogs()
   stopMihomoMemory()
+
+  if (child && !child.killed) {
+    await stopChildProcess(child)
+    child = undefined as unknown as ChildProcess
+  }
+
+  await getAxios(true).catch(() => {})
+
+  if (existsSync(path.join(dataDir(), 'core.pid'))) {
+    const pidString = await readFile(path.join(dataDir(), 'core.pid'), 'utf-8')
+    const pid = parseInt(pidString.trim())
+    if (!isNaN(pid)) {
+      try {
+        process.kill(pid, 0)
+        process.kill(pid, 'SIGINT')
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+        try {
+          process.kill(pid, 0)
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          // ignore
+        }
+      } catch {
+        // ignore
+      }
+    }
+    await rm(path.join(dataDir(), 'core.pid')).catch(() => {})
+  }
+}
+
+async function stopChildProcess(process: ChildProcess): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (!process || process.killed) {
+      resolve()
+      return
+    }
+
+    const pid = process.pid
+    if (!pid) {
+      resolve()
+      return
+    }
+
+    process.removeAllListeners()
+
+    let isResolved = false
+    const timers: NodeJS.Timeout[] = []
+
+    const resolveOnce = async (): Promise<void> => {
+      if (!isResolved) {
+        isResolved = true
+
+        timers.forEach((timer) => clearTimeout(timer))
+        resolve()
+      }
+    }
+
+    process.once('close', resolveOnce)
+    process.once('exit', resolveOnce)
+
+    try {
+      process.kill('SIGINT')
+
+      const timer1 = setTimeout(async () => {
+        if (!process.killed && !isResolved) {
+          try {
+            if (pid) {
+              globalThis.process.kill(pid, 0)
+              process.kill('SIGTERM')
+            }
+          } catch {
+            await resolveOnce()
+          }
+        }
+      }, 3000)
+      timers.push(timer1)
+
+      const timer2 = setTimeout(async () => {
+        if (!process.killed && !isResolved) {
+          try {
+            if (pid) {
+              globalThis.process.kill(pid, 0)
+              process.kill('SIGKILL')
+              await writeFile(logPath(), `[Manager]: Force killed process ${pid} with SIGKILL\n`, {
+                flag: 'a'
+              })
+            }
+          } catch {
+            // ignore
+          }
+          await resolveOnce()
+        }
+      }, 6000)
+      timers.push(timer2)
+    } catch (error) {
+      resolveOnce()
+      return
+    }
+  })
 }
 
 export async function restartCore(): Promise<void> {
   try {
-    await startCore()
+    await stopCore()
+    const promises = await startCore()
+    await Promise.all(promises)
   } catch (e) {
     dialog.showErrorBox('内核启动出错', `${e}`)
   }
@@ -296,28 +442,106 @@ async function checkProfile(): Promise<void> {
   }
 }
 
-export async function manualGrantCorePermition(): Promise<void> {
-  const { core = 'mihomo' } = await getAppConfig()
-  const corePath = mihomoCorePath(core)
-  const execPromise = promisify(exec)
+export async function manualGrantCorePermition(
+  cores?: ('mihomo' | 'mihomo-alpha')[]
+): Promise<void> {
   const execFilePromise = promisify(execFile)
-  if (process.platform === 'darwin') {
-    const shell = `chown root:admin ${corePath.replace(' ', '\\\\ ')}\nchmod +sx ${corePath.replace(' ', '\\\\ ')}`
-    const command = `do shell script "${shell}" with administrator privileges`
-    await execPromise(`osascript -e '${command}'`)
+
+  const grantPermission = async (coreName: 'mihomo' | 'mihomo-alpha'): Promise<void> => {
+    const corePath = mihomoCorePath(coreName)
+    try {
+      if (process.platform === 'darwin') {
+        const escapedPath = corePath.replace(/"/g, '\\"')
+        const shell = `chown root:admin \\"${escapedPath}\\" && chmod +sx \\"${escapedPath}\\"`
+        const command = `do shell script "${shell}" with administrator privileges`
+        await execFilePromise('osascript', ['-e', command])
+      }
+      if (process.platform === 'linux') {
+        await execFilePromise('pkexec', [
+          'bash',
+          '-c',
+          `chown root:root "${corePath}" && chmod +sx "${corePath}"`
+        ])
+      }
+    } catch (error) {
+      if (isUserCancelledError(error)) {
+        throw new UserCancelledError()
+      }
+      throw error
+    }
   }
-  if (process.platform === 'linux') {
-    await execFilePromise('pkexec', [
-      'bash',
-      '-c',
-      `chown root:root "${corePath}" && chmod +sx "${corePath}"`
-    ])
+
+  const targetCores = cores || ['mihomo', 'mihomo-alpha']
+  await Promise.all(targetCores.map((core) => grantPermission(core)))
+}
+
+export function checkCorePermissionSync(coreName: 'mihomo' | 'mihomo-alpha'): boolean {
+  if (process.platform === 'win32') return true
+  try {
+    const corePath = mihomoCorePath(coreName)
+    const stdout = execFileSync('ls', ['-l', corePath], { encoding: 'utf8' })
+    const permissions = stdout.trim().split(/\s+/)[0]
+    return permissions.includes('s') || permissions.includes('S')
+  } catch {
+    return false
   }
 }
 
+export async function checkCorePermission(): Promise<{ mihomo: boolean; 'mihomo-alpha': boolean }> {
+  const execFilePromise = promisify(execFile)
+
+  const checkPermission = async (coreName: 'mihomo' | 'mihomo-alpha'): Promise<boolean> => {
+    try {
+      const corePath = mihomoCorePath(coreName)
+      const { stdout } = await execFilePromise('ls', ['-l', corePath])
+      const permissions = stdout.trim().split(/\s+/)[0]
+      return permissions.includes('s') || permissions.includes('S')
+    } catch (error) {
+      return false
+    }
+  }
+
+  const [mihomoPermission, mihomoAlphaPermission] = await Promise.all([
+    checkPermission('mihomo'),
+    checkPermission('mihomo-alpha')
+  ])
+
+  return {
+    mihomo: mihomoPermission,
+    'mihomo-alpha': mihomoAlphaPermission
+  }
+}
+
+export async function revokeCorePermission(cores?: ('mihomo' | 'mihomo-alpha')[]): Promise<void> {
+  const execFilePromise = promisify(execFile)
+
+  const revokePermission = async (coreName: 'mihomo' | 'mihomo-alpha'): Promise<void> => {
+    const corePath = mihomoCorePath(coreName)
+    try {
+      if (process.platform === 'darwin') {
+        const escapedPath = corePath.replace(/"/g, '\\"')
+        const shell = `chmod a-s \\"${escapedPath}\\"`
+        const command = `do shell script "${shell}" with administrator privileges`
+        await execFilePromise('osascript', ['-e', command])
+      }
+      if (process.platform === 'linux') {
+        await execFilePromise('pkexec', ['bash', '-c', `chmod a-s "${corePath}"`])
+      }
+    } catch (error) {
+      if (isUserCancelledError(error)) {
+        throw new UserCancelledError()
+      }
+      throw error
+    }
+  }
+
+  const targetCores = cores || ['mihomo', 'mihomo-alpha']
+  await Promise.all(targetCores.map((core) => revokePermission(core)))
+}
+
 export async function getDefaultDevice(): Promise<string> {
-  const execPromise = promisify(exec)
-  const { stdout: deviceOut } = await execPromise(`route -n get default`)
+  const execFilePromise = promisify(execFile)
+  const { stdout: deviceOut } = await execFilePromise('route', ['-n', 'get', 'default'])
   let device = deviceOut.split('\n').find((s) => s.includes('interface:'))
   device = device?.trim().split(' ').slice(1).join(' ')
   if (!device) throw new Error('Get device failed')
@@ -325,9 +549,9 @@ export async function getDefaultDevice(): Promise<string> {
 }
 
 async function getDefaultService(): Promise<string> {
-  const execPromise = promisify(exec)
+  const execFilePromise = promisify(execFile)
   const device = await getDefaultDevice()
-  const { stdout: order } = await execPromise(`networksetup -listnetworkserviceorder`)
+  const { stdout: order } = await execFilePromise('networksetup', ['-listnetworkserviceorder'])
   const block = order.split('\n\n').find((s) => s.includes(`Device: ${device}`))
   if (!block) throw new Error('Get networkservice failed')
   for (const line of block.split('\n')) {
@@ -339,9 +563,9 @@ async function getDefaultService(): Promise<string> {
 }
 
 async function getOriginDNS(): Promise<void> {
-  const execPromise = promisify(exec)
+  const execFilePromise = promisify(execFile)
   const service = await getDefaultService()
-  const { stdout: dns } = await execPromise(`networksetup -getdnsservers "${service}"`)
+  const { stdout: dns } = await execFilePromise('networksetup', ['-getdnsservers', service])
   if (dns.startsWith("There aren't any DNS Servers set on")) {
     await patchAppConfig({ originDNS: 'Empty' })
   } else {
@@ -349,19 +573,27 @@ async function getOriginDNS(): Promise<void> {
   }
 }
 
-async function setDNS(dns: string): Promise<void> {
+async function setDNS(dns: string, mode: 'none' | 'exec' | 'service'): Promise<void> {
   const service = await getDefaultService()
-  const execPromise = promisify(exec)
-  await execPromise(`networksetup -setdnsservers "${service}" ${dns}`)
+  const dnsServers = dns.split(' ')
+  if (mode === 'exec') {
+    const execFilePromise = promisify(execFile)
+    await execFilePromise('networksetup', ['-setdnsservers', service, ...dnsServers])
+    return
+  }
+  if (mode === 'service') {
+    await setSysDns(service, dnsServers)
+    return
+  }
 }
 
 async function setPublicDNS(): Promise<void> {
   if (process.platform !== 'darwin') return
   if (net.isOnline()) {
-    const { originDNS } = await getAppConfig()
+    const { originDNS, autoSetDNSMode = 'none' } = await getAppConfig()
     if (!originDNS) {
       await getOriginDNS()
-      await setDNS('223.5.5.5')
+      await setDNS('223.5.5.5', autoSetDNSMode)
     }
   } else {
     if (setPublicDNSTimer) clearTimeout(setPublicDNSTimer)
@@ -372,9 +604,9 @@ async function setPublicDNS(): Promise<void> {
 async function recoverDNS(): Promise<void> {
   if (process.platform !== 'darwin') return
   if (net.isOnline()) {
-    const { originDNS } = await getAppConfig()
+    const { originDNS, autoSetDNSMode = 'none' } = await getAppConfig()
     if (originDNS) {
-      await setDNS(originDNS)
+      await setDNS(originDNS, autoSetDNSMode)
       await patchAppConfig({ originDNS: undefined })
     }
   } else {
@@ -387,7 +619,8 @@ export async function startNetworkDetection(): Promise<void> {
   const {
     onlyActiveDevice = false,
     networkDetectionBypass = [],
-    networkDetectionInterval = 10
+    networkDetectionInterval = 10,
+    sysProxy = { enable: false }
   } = await getAppConfig()
   const { tun: { device = process.platform === 'darwin' ? undefined : 'mihomo' } = {} } =
     await getControledMihomoConfig()
@@ -398,17 +631,18 @@ export async function startNetworkDetection(): Promise<void> {
     [device, 'lo', 'docker0', 'utun'].filter((item): item is string => item !== undefined)
   )
 
-  networkDetectionTimer = setInterval(() => {
+  networkDetectionTimer = setInterval(async () => {
     if (isAnyNetworkInterfaceUp(extendedBypass) && net.isOnline()) {
-      if (networkDownHandled && child && child.killed) {
-        startCore()
-        triggerSysProxy(true, onlyActiveDevice)
+      if ((networkDownHandled && !child) || (child && child.killed)) {
+        const promises = await startCore()
+        await Promise.all(promises)
+        if (sysProxy.enable) triggerSysProxy(true, onlyActiveDevice)
         networkDownHandled = false
       }
     } else {
       if (!networkDownHandled) {
-        disableSysProxy(false)
-        stopCore()
+        if (sysProxy.enable) disableSysProxy(onlyActiveDevice)
+        await stopCore()
         networkDownHandled = true
       }
     }

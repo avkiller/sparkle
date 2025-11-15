@@ -6,6 +6,11 @@ import { restartCore } from '../core/manager'
 import { getAppConfig } from './app'
 import { existsSync } from 'fs'
 import axios, { AxiosResponse } from 'axios'
+import https from 'https'
+import http from 'http'
+import tls from 'tls'
+import crypto from 'crypto'
+import { URL } from 'url'
 import { parseYaml, stringifyYaml } from '../utils/yaml'
 import { defaultProfile } from '../utils/template'
 import { subStorePort } from '../resolve/server'
@@ -14,6 +19,10 @@ import { deepMerge } from '../utils/merge'
 import { getUserAgent } from '../utils/userAgent'
 
 let profileConfig: ProfileConfig // profile.yaml
+
+export function getCertFingerprint(cert: tls.PeerCertificate) {
+  return crypto.createHash('sha256').update(cert.raw).digest('hex').toUpperCase()
+}
 
 export async function getProfileConfig(force = false): Promise<ProfileConfig> {
   if (force || !profileConfig) {
@@ -113,6 +122,9 @@ export async function createProfile(item: Partial<ProfileItem>): Promise<Profile
     name: item.name || (item.type === 'remote' ? 'Remote File' : 'Local File'),
     type: item.type,
     url: item.url,
+    fingerprint: item.fingerprint,
+    ua: item.ua,
+    verify: item.verify ?? false,
     substore: item.substore || false,
     interval: item.interval || 0,
     override: item.override || [],
@@ -140,35 +152,120 @@ export async function createProfile(item: Partial<ProfileItem>): Promise<Profile
           responseType: 'text'
         })
       } else {
-        res = await axios.get(item.url, {
-          proxy:
-            newItem.useProxy && mixedPort != 0
-              ? {
-                  protocol: 'http',
+        try {
+          const httpsAgent = new https.Agent({ rejectUnauthorized: !item.fingerprint })
+
+          if (item.fingerprint) {
+            const expected = item.fingerprint.replace(/:/g, '').toUpperCase()
+            const verify = (s: tls.TLSSocket) => {
+              if (getCertFingerprint(s.getPeerCertificate()) !== expected)
+                s.destroy(new Error('证书指纹不匹配'))
+            }
+
+            if (newItem.useProxy && mixedPort != 0) {
+              const urlObj = new URL(item.url)
+              const hostname = urlObj.hostname
+              const port = urlObj.port || '443'
+              httpsAgent.createConnection = (_, cb) => {
+                const req = http.request({
                   host: '127.0.0.1',
-                  port: mixedPort
-                }
-              : false,
-          headers: {
-            'User-Agent': await getUserAgent()
-          },
-          responseType: 'text'
-        })
+                  port: mixedPort,
+                  method: 'CONNECT',
+                  path: `${hostname}:${port}`
+                })
+
+                req.on('connect', (res, sock, head) => {
+                  if (res.statusCode !== 200) {
+                    cb?.(new Error(`代理连接失败，状态码：${res.statusCode}`), null!)
+                    return
+                  }
+                  if (head.length > 0) sock.unshift(head)
+                  const tls$ = tls.connect(
+                    { socket: sock, servername: hostname, rejectUnauthorized: false },
+                    () => verify(tls$)
+                  )
+                  cb?.(null, tls$)
+                })
+
+                req.on('error', (e) => cb?.(e, null!))
+                req.end()
+                return null!
+              }
+            } else {
+              const conn = httpsAgent.createConnection.bind(httpsAgent)
+              httpsAgent.createConnection = (o, c) => {
+                const sock = conn(o, c)
+                sock?.once('secureConnect', function (this: tls.TLSSocket) {
+                  verify(this)
+                })
+                return sock
+              }
+            }
+          }
+
+          res = await axios.get(item.url, {
+            httpsAgent,
+            ...(newItem.useProxy &&
+              mixedPort &&
+              !item.fingerprint && {
+                proxy: { protocol: 'http', host: '127.0.0.1', port: mixedPort }
+              }),
+            headers: { 'User-Agent': newItem.ua || (await getUserAgent()) },
+            responseType: 'text'
+          })
+        } catch (error) {
+          if (axios.isAxiosError(error)) {
+            if (error.code === 'ECONNRESET' || error.code === 'ECONNABORTED') {
+              throw new Error(`网络连接被重置或超时：${item.url}`)
+            } else if (error.code === 'CERT_HAS_EXPIRED') {
+              throw new Error(`服务器证书已过期：${item.url}`)
+            } else if (error.code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') {
+              throw new Error(`无法验证服务器证书：${item.url}`)
+            } else if (error.message.includes('Certificate verification failed')) {
+              throw new Error(`证书验证失败：${item.url}`)
+            } else {
+              throw new Error(`请求失败：${error.message}`)
+            }
+          }
+          throw error
+        }
       }
 
       const data = res.data
       const headers = res.headers
-      if (headers['content-disposition'] && newItem.name === 'Remote File') {
-        newItem.name = parseFilename(headers['content-disposition'])
+      const contentDispositionKey = Object.keys(headers).find((k) =>
+        k.toLowerCase().endsWith('content-disposition')
+      )
+      if (contentDispositionKey && newItem.name === 'Remote File') {
+        newItem.name = parseFilename(headers[contentDispositionKey])
       }
-      if (headers['profile-web-page-url']) {
-        newItem.home = headers['profile-web-page-url']
+      const homeKey = Object.keys(headers).find((k) =>
+        k.toLowerCase().endsWith('profile-web-page-url')
+      )
+      if (homeKey) {
+        newItem.home = headers[homeKey]
       }
-      if (headers['profile-update-interval']) {
-        newItem.interval = parseInt(headers['profile-update-interval']) * 60
+      const intervalKey = Object.keys(headers).find((k) =>
+        k.toLowerCase().endsWith('profile-update-interval')
+      )
+      if (intervalKey) {
+        newItem.interval = parseInt(headers[intervalKey]) * 60
+        if (newItem.interval) {
+          newItem.locked = true
+        }
       }
-      if (headers['subscription-userinfo']) {
-        newItem.extra = parseSubinfo(headers['subscription-userinfo'])
+      const userinfoKey = Object.keys(headers).find((k) =>
+        k.toLowerCase().endsWith('subscription-userinfo')
+      )
+      if (userinfoKey) {
+        newItem.extra = parseSubinfo(headers[userinfoKey])
+      }
+      if (newItem.verify) {
+        try {
+          parseYaml<MihomoConfig>(data)
+        } catch (error) {
+          throw new Error('订阅格式错误，无法解析为有效的配置文件\n' + (error as Error).message)
+        }
       }
       await setProfileStr(id, data)
       break

@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import SettingCard from '../base/base-setting-card'
 import SettingItem from '../base/base-setting-item'
-import { Button, Input, Select, SelectItem, Switch, Tooltip } from '@heroui/react'
+import { Button, Input, Select, SelectItem, Switch, Tab, Tabs, Tooltip } from '@heroui/react'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
 import debounce from '@renderer/utils/debounce'
 import {
@@ -29,7 +29,9 @@ const MihomoConfig: React.FC = () => {
     delayTestUrl,
     userAgent,
     mihomoCpuPriority = 'PRIORITY_NORMAL',
-    proxyCols = 'auto'
+    proxyCols = 'auto',
+    groupDisplayLayout = 'single',
+    proxyDisplayLayout = 'double'
   } = appConfig || {}
   const [url, setUrl] = useState(delayTestUrl)
   const [pauseSSIDInput, setPauseSSIDInput] = useState(pauseSSID)
@@ -150,6 +152,38 @@ const MihomoConfig: React.FC = () => {
           <SelectItem key="3">三列</SelectItem>
           <SelectItem key="4">四列</SelectItem>
         </Select>
+      </SettingItem>
+      <SettingItem title="代理组详细信息" divider>
+        <Tabs
+          size="sm"
+          color="primary"
+          selectedKey={groupDisplayLayout}
+          onSelectionChange={async (v) => {
+            await patchAppConfig({
+              groupDisplayLayout: v as 'hidden' | 'single' | 'double'
+            })
+          }}
+        >
+          <Tab key="hidden" title="隐藏" />
+          <Tab key="single" title="单行" />
+          <Tab key="double" title="双行" />
+        </Tabs>
+      </SettingItem>
+      <SettingItem title="代理节点详细信息" divider>
+        <Tabs
+          size="sm"
+          color="primary"
+          selectedKey={proxyDisplayLayout}
+          onSelectionChange={async (v) => {
+            await patchAppConfig({
+              proxyDisplayLayout: v as 'hidden' | 'single' | 'double'
+            })
+          }}
+        >
+          <Tab key="hidden" title="隐藏" />
+          <Tab key="single" title="单行" />
+          <Tab key="double" title="双行" />
+        </Tabs>
       </SettingItem>
       {platform === 'win32' && (
         <SettingItem title="内核进程优先级" divider>

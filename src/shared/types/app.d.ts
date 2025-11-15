@@ -9,6 +9,7 @@ interface ISysProxyConfig {
   mode?: SysProxyMode
   bypass?: string[]
   pacScript?: string
+  settingMode?: 'exec' | 'service'
 }
 
 interface IHost {
@@ -18,7 +19,10 @@ interface IHost {
 
 interface AppConfig {
   updateChannel: 'stable' | 'beta'
-  core: 'mihomo' | 'mihomo-alpha'
+  core: 'mihomo' | 'mihomo-alpha' | 'system'
+  systemCorePath?: string
+  corePermissionMode?: 'elevated' | 'service'
+  serviceAuthKey?: string
   disableLoopbackDetector: boolean
   disableEmbedCA: boolean
   disableSystemCA: boolean
@@ -26,6 +30,8 @@ interface AppConfig {
   safePaths: string[]
   proxyDisplayMode: 'simple' | 'full'
   proxyDisplayOrder: 'default' | 'delay' | 'name'
+  proxyDisplayLayout: 'hidden' | 'single' | 'double'
+  groupDisplayLayout: 'hidden' | 'single' | 'double'
   profileDisplayDate?: 'expire' | 'update'
   envType?: ('bash' | 'cmd' | 'powershell' | 'nushell')[]
   proxyCols: 'auto' | '1' | '2' | '3' | '4'
@@ -61,7 +67,7 @@ interface AppConfig {
   mihomoCpuPriority?: Priority
   customSubStoreUrl?: string
   diffWorkDir?: boolean
-  autoSetDNS?: boolean
+  autoSetDNSMode?: 'none' | 'exec' | 'service'
   originDNS?: string
   useWindowFrame: boolean
   proxyInTray: boolean
@@ -117,7 +123,10 @@ interface ProfileItem {
   type: 'remote' | 'local'
   name: string
   url?: string // remote
+  fingerprint?: string // remote
+  ua?: string // remote
   file?: string // local
+  verify?: boolean // remote
   interval?: number
   home?: string
   updated?: number
@@ -125,6 +134,7 @@ interface ProfileItem {
   useProxy?: boolean
   extra?: SubscriptionUserInfo
   substore?: boolean
+  locked?: boolean
 }
 
 interface SubscriptionUserInfo {
@@ -147,6 +157,7 @@ interface OverrideItem {
   global?: boolean
   url?: string
   file?: string
+  fingerprint?: string
 }
 
 interface SubStoreSub {
