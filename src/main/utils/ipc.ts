@@ -1,7 +1,7 @@
 import { app, dialog, ipcMain } from 'electron'
 import {
   mihomoChangeProxy,
-  mihomoCloseAllConnections,
+  mihomoCloseConnections,
   mihomoCloseConnection,
   mihomoGroupDelay,
   mihomoGroups,
@@ -18,7 +18,9 @@ import {
   mihomoUpgradeGeo,
   mihomoVersion,
   mihomoConfig,
-  patchMihomoConfig
+  patchMihomoConfig,
+  restartMihomoConnections,
+  mihomoRulesDisable
 } from '../core/mihomoApi'
 import { checkAutoRun, disableAutoRun, enableAutoRun } from '../sys/autoRun'
 import {
@@ -98,7 +100,7 @@ import {
 } from '../core/factory'
 import { listWebdavBackups, webdavBackup, webdavDelete, webdavRestore } from '../resolve/backup'
 import { getInterfaces } from '../sys/interface'
-import { closeTrayIcon, copyEnv, showTrayIcon } from '../resolve/tray'
+import { closeTrayIcon, copyEnv, setDockVisible, showTrayIcon } from '../resolve/tray'
 import { registerShortcut } from '../resolve/shortcut'
 import {
   closeMainWindow,
@@ -152,8 +154,8 @@ export function registerIpcMainHandlers(): void {
   ipcMain.handle('mihomoVersion', ipcErrorWrapper(mihomoVersion))
   ipcMain.handle('mihomoConfig', ipcErrorWrapper(mihomoConfig))
   ipcMain.handle('mihomoCloseConnection', (_e, id) => ipcErrorWrapper(mihomoCloseConnection)(id))
-  ipcMain.handle('mihomoCloseAllConnections', (_e, name) =>
-    ipcErrorWrapper(mihomoCloseAllConnections)(name)
+  ipcMain.handle('mihomoCloseConnections', (_e, name) =>
+    ipcErrorWrapper(mihomoCloseConnections)(name)
   )
   ipcMain.handle('mihomoRules', ipcErrorWrapper(mihomoRules))
   ipcMain.handle('mihomoProxies', ipcErrorWrapper(mihomoProxies))
@@ -179,6 +181,7 @@ export function registerIpcMainHandlers(): void {
   ipcMain.handle('mihomoGroupDelay', (_e, group, url) =>
     ipcErrorWrapper(mihomoGroupDelay)(group, url)
   )
+  ipcMain.handle('mihomoRulesDisable', (_e, rules) => ipcErrorWrapper(mihomoRulesDisable)(rules))
   ipcMain.handle('patchMihomoConfig', (_e, patch) => ipcErrorWrapper(patchMihomoConfig)(patch))
   ipcMain.handle('checkAutoRun', ipcErrorWrapper(checkAutoRun))
   ipcMain.handle('enableAutoRun', ipcErrorWrapper(enableAutoRun))
@@ -212,6 +215,7 @@ export function registerIpcMainHandlers(): void {
   ipcMain.handle('getOverride', (_e, id, ext) => ipcErrorWrapper(getOverride)(id, ext))
   ipcMain.handle('setOverride', (_e, id, ext, str) => ipcErrorWrapper(setOverride)(id, ext, str))
   ipcMain.handle('restartCore', ipcErrorWrapper(restartCore))
+  ipcMain.handle('restartMihomoConnections', ipcErrorWrapper(restartMihomoConnections))
   ipcMain.handle('startMonitor', (_e, detached) => ipcErrorWrapper(startMonitor)(detached))
   ipcMain.handle('triggerSysProxy', (_e, enable, onlyActiveDevice) =>
     ipcErrorWrapper(triggerSysProxy)(enable, onlyActiveDevice)
@@ -276,7 +280,9 @@ export function registerIpcMainHandlers(): void {
   })
   ipcMain.handle('setTitleBarOverlay', (_e, overlay) =>
     ipcErrorWrapper(async (overlay): Promise<void> => {
-      mainWindow?.setTitleBarOverlay(overlay)
+      if (typeof mainWindow?.setTitleBarOverlay === 'function') {
+        mainWindow.setTitleBarOverlay(overlay)
+      }
     })(overlay)
   )
   ipcMain.handle('setAlwaysOnTop', (_e, alwaysOnTop) => {
@@ -287,6 +293,7 @@ export function registerIpcMainHandlers(): void {
   })
   ipcMain.handle('showTrayIcon', () => ipcErrorWrapper(showTrayIcon)())
   ipcMain.handle('closeTrayIcon', () => ipcErrorWrapper(closeTrayIcon)())
+  ipcMain.handle('setDockVisible', (_e, visible: boolean) => setDockVisible(visible))
   ipcMain.handle('showMainWindow', showMainWindow)
   ipcMain.handle('closeMainWindow', closeMainWindow)
   ipcMain.handle('triggerMainWindow', triggerMainWindow)

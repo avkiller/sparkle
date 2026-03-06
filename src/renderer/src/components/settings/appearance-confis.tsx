@@ -12,6 +12,7 @@ import {
   importThemes,
   relaunchApp,
   resolveThemes,
+  setDockVisible,
   showFloatingWindow,
   showTrayIcon,
   startMonitor,
@@ -34,14 +35,13 @@ const AppearanceConfig: React.FC = () => {
     useDockIcon = true,
     showTraffic = false,
     proxyInTray = true,
+    trayProxyDelayLayout = 'auto',
     disableTray = false,
     showFloatingWindow: showFloating = false,
     spinFloatingIcon = true,
     useWindowFrame = false,
     customTheme = 'default.css',
-    appTheme = 'system',
-    displayIcon = true,
-    displayAppName = true
+    appTheme = 'system'
   } = appConfig || {}
   const [localShowFloating, setLocalShowFloating] = useState(showFloating)
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -74,29 +74,6 @@ const AppearanceConfig: React.FC = () => {
         />
       )}
       <SettingCard title="外观设置">
-        <SettingItem title="连接显示应用图标" divider>
-          <Switch
-            size="sm"
-            isSelected={displayIcon}
-            onValueChange={(v) => {
-              patchAppConfig({ displayIcon: v })
-              if (!v) {
-                patchAppConfig({ displayAppName: false })
-              }
-            }}
-          />
-        </SettingItem>
-        {displayIcon && (
-          <SettingItem title="连接显示应用名称" divider>
-            <Switch
-              size="sm"
-              isSelected={displayAppName}
-              onValueChange={(v) => {
-                patchAppConfig({ displayAppName: v })
-              }}
-            />
-          </SettingItem>
-        )}
         <SettingItem
           title="显示悬浮窗"
           actions={
@@ -172,6 +149,24 @@ const AppearanceConfig: React.FC = () => {
                 }}
               />
             </SettingItem>
+            {proxyInTray && (
+              <SettingItem title="托盘菜单节点延迟显示方式" divider>
+                <Tabs
+                  size="sm"
+                  color="primary"
+                  selectedKey={trayProxyDelayLayout}
+                  onSelectionChange={async (v) => {
+                    await patchAppConfig({
+                      trayProxyDelayLayout: v as 'same-line' | 'new-line'
+                    })
+                    window.electron.ipcRenderer.send('updateTrayMenu')
+                  }}
+                >
+                  <Tab key="same-line" title="同一行" />
+                  <Tab key="new-line" title="换行" />
+                </Tabs>
+              </SettingItem>
+            )}
             <SettingItem
               title={`${platform === 'win32' ? '任务栏' : '状态栏'}显示网速信息`}
               divider
@@ -195,6 +190,7 @@ const AppearanceConfig: React.FC = () => {
                 isSelected={useDockIcon}
                 onValueChange={async (v) => {
                   await patchAppConfig({ useDockIcon: v })
+                  setDockVisible(v)
                 }}
               />
             </SettingItem>

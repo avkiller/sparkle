@@ -7,15 +7,18 @@ export const defaultConfig: AppConfig = {
   appTheme: 'system',
   useWindowFrame: false,
   proxyInTray: true,
+  trayProxyDelayLayout: 'new-line',
+  useCustomTrayMenu: false,
   maxLogDays: 7,
   proxyCols: 'auto',
   connectionDirection: 'asc',
   connectionOrderBy: 'time',
+  connectionInterval: 500,
   useSubStore: true,
-  proxyDisplayMode: 'simple',
   proxyDisplayOrder: 'default',
   autoCheckUpdate: false,
   autoCloseConnection: true,
+  closeMode: 'all',
   controlDns: true,
   controlSniff: true,
   hosts: [],
@@ -43,7 +46,9 @@ export const defaultConfig: AppConfig = {
   safePaths: [],
   disableGPU: process.platform === 'win32' && parseInt(os.release().split('.')[2], 10) <= 20000,
   proxyDisplayLayout: 'double',
-  groupDisplayLayout: 'double'
+  groupDisplayLayout: 'double',
+  autoLightweightMode: 'core',
+  delayTestUrlScope: 'group'
 }
 
 export const defaultControledMihomoConfig: Partial<MihomoConfig> = {
@@ -72,7 +77,6 @@ export const defaultControledMihomoConfig: Partial<MihomoConfig> = {
   'keep-alive-idle': 0,
   'keep-alive-interval': 0,
   'disable-keep-alive': false,
-  'global-client-fingerprint': '',
   'lan-allowed-ips': ['0.0.0.0/0', '::/0'],
   'lan-disallowed-ips': [],
   authentication: [],
@@ -91,6 +95,7 @@ export const defaultControledMihomoConfig: Partial<MihomoConfig> = {
   dns: {
     enable: true,
     ipv6: true,
+    'respect-rules': false,
     'enhanced-mode': 'fake-ip',
     'fake-ip-range': '198.18.0.1/16',
     'fake-ip-filter': ['*', '+.lan', '+.local', 'time.*.com', 'ntp.*.com', '+.market.xiaomi.com'],
@@ -98,7 +103,9 @@ export const defaultControledMihomoConfig: Partial<MihomoConfig> = {
     'use-system-hosts': false,
     'default-nameserver': ['tls://223.5.5.5'],
     nameserver: ['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query'],
+    'nameserver-policy': {},
     'proxy-server-nameserver': [],
+    'proxy-server-nameserver-policy': {},
     'direct-nameserver': []
   },
   sniffer: {

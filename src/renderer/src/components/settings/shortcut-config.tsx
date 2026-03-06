@@ -2,7 +2,7 @@ import { Button, Input } from '@heroui/react'
 import SettingCard from '../base/base-setting-card'
 import SettingItem from '../base/base-setting-item'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
-import React, { KeyboardEvent, useState } from 'react'
+import React, { KeyboardEvent, useState, useEffect } from 'react'
 import { platform } from '@renderer/utils/init'
 import { registerShortcut } from '@renderer/utils/ipc'
 
@@ -118,7 +118,7 @@ const ShortcutConfig: React.FC = () => {
           />
         </div>
       </SettingItem>
-      <SettingItem title="轻量模式" divider>
+      <SettingItem title="保留内核退出" divider>
         <div className="flex justify-end w-[60%]">
           <ShortcutInput
             value={quitWithoutCoreShortcut}
@@ -147,6 +147,10 @@ const ShortcutInput: React.FC<{
 }> = (props) => {
   const { value, action, patchAppConfig } = props
   const [inputValue, setInputValue] = useState(value)
+
+  useEffect(() => {
+    setInputValue(value)
+  }, [value])
 
   const parseShortcut = (
     event: KeyboardEvent,

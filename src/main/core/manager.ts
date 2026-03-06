@@ -114,11 +114,16 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
   }
   const { 'rule-providers': ruleProviders, 'proxy-providers': proxyProviders } =
     await getRuntimeConfig()
-  const providerNames = new Set([
-    ...Object.keys(ruleProviders || {}),
-    ...Object.keys(proxyProviders || {})
-  ])
-  const matchedProviders = new Set<string>()
+
+  const normalize = (s: string): string =>
+    s
+      .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+      .normalize('NFC')
+
+  const providerNames = new Set(
+    [...Object.keys(ruleProviders || {}), ...Object.keys(proxyProviders || {})].map(normalize)
+  )
+  const unmatchedProviders = new Set(providerNames)
   const stdout = createWriteStream(logPath(), { flags: 'a' })
   const stderr = createWriteStream(logPath(), { flags: 'a' })
   const env = {
@@ -194,10 +199,11 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
         resolve([
           new Promise((resolve, reject) => {
             const handleProviderInitialization = async (logLine: string): Promise<void> => {
-              for (const match of logLine.matchAll(
-                /Start initial provider ([\w\-!@#$%^&*()\p{Script=Han}]+)/gu
-              )) {
-                matchedProviders.add(match[1])
+              for (const match of logLine.matchAll(/Start initial provider ([^"]+)"/g)) {
+                const name = normalize(match[1])
+                if (providerNames.has(name)) {
+                  unmatchedProviders.delete(name)
+                }
               }
 
               if (
@@ -214,12 +220,9 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
               const isDefaultProvider = logLine.includes(
                 'Start initial compatible provider default'
               )
-              const isAllProvidersMatched =
-                providerNames.size > 0 && matchedProviders.size === providerNames.size
+              const isAllProvidersMatched = providerNames.size > 0 && unmatchedProviders.size === 0
 
               if ((providerNames.size === 0 && isDefaultProvider) || isAllProvidersMatched) {
-                matchedProviders.clear()
-
                 const waitForMihomoReady = async (): Promise<void> => {
                   const maxRetries = 30
                   const retryInterval = 100

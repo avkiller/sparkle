@@ -13,10 +13,12 @@ import { useState, useEffect } from 'react'
 import UpdaterModal from '../updater/updater-modal'
 import { version } from '@renderer/utils/init'
 import { IoIosHelpCircle } from 'react-icons/io'
-import { firstDriver } from '@renderer/App'
+import { startTour } from '@renderer/utils/driver'
+import { useNavigate } from 'react-router-dom'
 import ConfirmModal from '../base/base-confirm'
 
 const Actions: React.FC = () => {
+  const navigate = useNavigate()
   const [newVersion, setNewVersion] = useState('')
   const [changelog, setChangelog] = useState('')
   const [openUpdate, setOpenUpdate] = useState(false)
@@ -83,7 +85,7 @@ const Actions: React.FC = () => {
       )}
       <SettingCard>
         <SettingItem title="打开引导页面" divider>
-          <Button size="sm" onPress={() => firstDriver.drive()}>
+          <Button size="sm" onPress={() => startTour(navigate)}>
             打开引导页面
           </Button>
         </SettingItem>
@@ -158,7 +160,7 @@ const Actions: React.FC = () => {
           </Button>
         </SettingItem>
         <SettingItem
-          title="轻量模式"
+          title="保留内核退出"
           actions={
             <Tooltip content="完全退出软件，只保留内核进程">
               <Button isIconOnly size="sm" variant="light">
@@ -169,7 +171,7 @@ const Actions: React.FC = () => {
           divider
         >
           <Button size="sm" onPress={quitWithoutCore}>
-            轻量模式
+            退出
           </Button>
         </SettingItem>
         <SettingItem title="退出应用" divider>

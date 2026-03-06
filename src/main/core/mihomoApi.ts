@@ -72,7 +72,7 @@ export const mihomoGetConnections = async (): Promise<ControllerConnections> => 
   return await instance.get('/connections')
 }
 
-export const mihomoCloseAllConnections = async (name?: string): Promise<void> => {
+export const mihomoCloseConnections = async (name?: string): Promise<void> => {
   const instance = await getAxios()
   if (name) {
     const connectionsInfo = await mihomoGetConnections()
@@ -191,6 +191,11 @@ export const mihomoGroupDelay = async (
       timeout: delayTestTimeout || 5000
     }
   })
+}
+
+export const mihomoRulesDisable = async (rules: Record<string, boolean>): Promise<void> => {
+  const instance = await getAxios()
+  return await instance.patch(`/rules/disable`, rules)
 }
 
 export const mihomoUpgrade = async (): Promise<void> => {
@@ -361,8 +366,16 @@ export const stopMihomoConnections = (): void => {
   }
 }
 
+export const restartMihomoConnections = async (): Promise<void> => {
+  stopMihomoConnections()
+  await startMihomoConnections()
+}
+
 const mihomoConnections = async (): Promise<void> => {
-  mihomoConnectionsWs = new WebSocket(`ws+unix:${mihomoIpcPath()}:/connections`)
+  const { connectionInterval = 500 } = await getAppConfig()
+  mihomoConnectionsWs = new WebSocket(
+    `ws+unix:${mihomoIpcPath()}:/connections?interval=${connectionInterval}`
+  )
 
   mihomoConnectionsWs.onmessage = (e): void => {
     const data = e.data as string

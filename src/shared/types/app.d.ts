@@ -28,15 +28,15 @@ interface AppConfig {
   disableSystemCA: boolean
   disableNftables: boolean
   safePaths: string[]
-  proxyDisplayMode: 'simple' | 'full'
   proxyDisplayOrder: 'default' | 'delay' | 'name'
   proxyDisplayLayout: 'hidden' | 'single' | 'double'
   groupDisplayLayout: 'hidden' | 'single' | 'double'
   profileDisplayDate?: 'expire' | 'update'
-  envType?: ('bash' | 'cmd' | 'powershell' | 'nushell')[]
+  envType?: ('bash' | 'fish' | 'cmd' | 'powershell' | 'nushell')[]
   proxyCols: 'auto' | '1' | '2' | '3' | '4'
   connectionDirection: 'asc' | 'desc'
   connectionOrderBy: 'time' | 'upload' | 'download' | 'uploadSpeed' | 'downloadSpeed' | 'process'
+  connectionInterval?: number
   spinFloatingIcon?: boolean
   disableTray?: boolean
   showFloatingWindow?: boolean
@@ -60,8 +60,9 @@ interface AppConfig {
   subStoreBackendSyncCron?: string
   subStoreBackendDownloadCron?: string
   subStoreBackendUploadCron?: string
-  autoQuitWithoutCore?: boolean
-  autoQuitWithoutCoreDelay?: number
+  autoLightweight?: boolean
+  autoLightweightDelay?: number
+  autoLightweightMode?: 'core' | 'tray'
   useCustomSubStore?: boolean
   useProxyInSubStore?: boolean
   mihomoCpuPriority?: Priority
@@ -71,6 +72,7 @@ interface AppConfig {
   originDNS?: string
   useWindowFrame: boolean
   proxyInTray: boolean
+  trayProxyDelayLayout?: 'same-line' | 'new-line'
   siderOrder: string[]
   siderWidth: number
   appTheme: AppTheme
@@ -78,17 +80,20 @@ interface AppConfig {
   autoCheckUpdate: boolean
   silentStart: boolean
   autoCloseConnection: boolean
+  closeMode: 'all' | 'group'
   sysProxy: ISysProxyConfig
   maxLogDays: number
   userAgent?: string
   delayTestConcurrency?: number
   delayTestUrl?: string
+  delayTestUrlScope?: 'group' | 'global'
   delayTestTimeout?: number
   encryptedPassword?: number[]
   controlDns?: boolean
   controlSniff?: boolean
   useDockIcon?: boolean
   showTraffic?: boolean
+  useCustomTrayMenu?: boolean
   webdavUrl?: string
   webdavDir?: string
   webdavUsername?: string
@@ -135,6 +140,7 @@ interface ProfileItem {
   extra?: SubscriptionUserInfo
   substore?: boolean
   locked?: boolean
+  autoUpdate?: boolean
 }
 
 interface SubscriptionUserInfo {

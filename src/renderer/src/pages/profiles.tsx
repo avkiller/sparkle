@@ -29,9 +29,13 @@ import {
 import { SortableContext } from '@dnd-kit/sortable'
 import { FaPlus } from 'react-icons/fa6'
 import { IoMdRefresh } from 'react-icons/io'
+import { MdTune } from 'react-icons/md'
 import SubStoreIcon from '@renderer/components/base/substore-icon'
+import ProfileSettingModal from '@renderer/components/profiles/profile-setting-modal'
 import useSWR from 'swr'
 import { useNavigate } from 'react-router-dom'
+
+const emptyItems: ProfileItem[] = []
 
 const Profiles: React.FC = () => {
   const {
@@ -45,9 +49,10 @@ const Profiles: React.FC = () => {
   } = useProfileConfig()
   const { appConfig } = useAppConfig()
   const { useSubStore = true, useCustomSubStore = false, customSubStoreUrl = '' } = appConfig || {}
-  const { current, items = [] } = profileConfig || {}
+  const { current, items } = profileConfig || {}
+  const itemsArray = items ?? emptyItems
   const navigate = useNavigate()
-  const [sortedItems, setSortedItems] = useState(items)
+  const [sortedItems, setSortedItems] = useState(itemsArray)
   const [useProxy, setUseProxy] = useState(false)
   const [subStoreImporting, setSubStoreImporting] = useState(false)
   const [importing, setImporting] = useState(false)
@@ -55,6 +60,7 @@ const Profiles: React.FC = () => {
   const [switching, setSwitching] = useState(false)
   const [fileOver, setFileOver] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
+  const [isSettingModalOpen, setIsSettingModalOpen] = useState(false)
   const [editingItem, setEditingItem] = useState<ProfileItem | null>(null)
   const [url, setUrl] = useState('')
   const isUrlEmpty = url.trim() === ''
@@ -133,7 +139,7 @@ const Profiles: React.FC = () => {
   }, [subs, collections])
   const handleImport = async (importUrl: string): Promise<void> => {
     setImporting(true)
-    await addProfileItem({ name: '', type: 'remote', url: importUrl, useProxy })
+    await addProfileItem({ name: '', type: 'remote', url: importUrl, useProxy, autoUpdate: true })
     setUrl('')
     setImporting(false)
   }
@@ -147,7 +153,7 @@ const Profiles: React.FC = () => {
         const activeIndex = newOrder.findIndex((item) => item.id === active.id)
         const overIndex = newOrder.findIndex((item) => item.id === over.id)
         newOrder.splice(activeIndex, 1)
-        newOrder.splice(overIndex, 0, items[activeIndex])
+        newOrder.splice(overIndex, 0, itemsArray[activeIndex])
         setSortedItems(newOrder)
         await setProfileConfig({ current, items: newOrder })
       }
@@ -207,41 +213,55 @@ const Profiles: React.FC = () => {
   }, [])
 
   useEffect(() => {
-    setSortedItems(items)
-  }, [items])
+    setSortedItems(itemsArray)
+  }, [itemsArray])
 
   return (
     <BasePage
       ref={pageRef}
       title="订阅管理"
       header={
-        <Button
-          size="sm"
-          title="更新全部订阅"
-          className="app-nodrag"
-          variant="light"
-          isIconOnly
-          onPress={async () => {
-            setUpdating(true)
-            for (const item of items) {
-              if (item.id === current) continue
-              if (item.type !== 'remote') continue
-              await addProfileItem(item)
-            }
-            const currentItem = items.find((item) => item.id === current)
-            if (currentItem && currentItem.type === 'remote') {
-              await addProfileItem(currentItem)
-            }
-            setUpdating(false)
-          }}
-        >
-          <IoMdRefresh className={`text-lg ${updating ? 'animate-spin' : ''}`} />
-        </Button>
+        <>
+          <Button
+            size="sm"
+            title="更新全部订阅"
+            className="app-nodrag"
+            variant="light"
+            isIconOnly
+            onPress={async () => {
+              setUpdating(true)
+              for (const item of itemsArray) {
+                if (item.id === current) continue
+                if (item.type !== 'remote') continue
+                await addProfileItem(item)
+              }
+              const currentItem = itemsArray.find((item) => item.id === current)
+              if (currentItem && currentItem.type === 'remote') {
+                await addProfileItem(currentItem)
+              }
+              setUpdating(false)
+            }}
+          >
+            <IoMdRefresh className={`text-lg ${updating ? 'animate-spin' : ''}`} />
+          </Button>
+          <Button
+            size="sm"
+            title="订阅设置"
+            className="app-nodrag"
+            variant="light"
+            isIconOnly
+            onPress={() => setIsSettingModalOpen(true)}
+          >
+            <MdTune className="text-lg" />
+          </Button>
+        </>
       }
     >
+      {isSettingModalOpen && <ProfileSettingModal onClose={() => setIsSettingModalOpen(false)} />}
       {showEditModal && editingItem && (
         <EditInfoModal
           item={editingItem}
+          isCurrent={editingItem.id === current}
           updateProfileItem={async (item: ProfileItem) => {
             await addProfileItem(item)
             setShowEditModal(false)
@@ -410,7 +430,8 @@ const Profiles: React.FC = () => {
                       name: '',
                       type: 'remote',
                       url: '',
-                      useProxy: false
+                      useProxy: false,
+                      autoUpdate: true
                     }
                     setEditingItem(newRemoteProfile)
                     setShowEditModal(true)

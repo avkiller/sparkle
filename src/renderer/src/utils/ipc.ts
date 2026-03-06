@@ -21,10 +21,8 @@ export async function mihomoCloseConnection(id: string): Promise<void> {
   return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('mihomoCloseConnection', id))
 }
 
-export async function mihomoCloseAllConnections(name?: string): Promise<void> {
-  return ipcErrorWrapper(
-    await window.electron.ipcRenderer.invoke('mihomoCloseAllConnections', name)
-  )
+export async function mihomoCloseConnections(name?: string): Promise<void> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('mihomoCloseConnections', name))
 }
 
 export async function mihomoRules(): Promise<ControllerRules> {
@@ -93,6 +91,10 @@ export async function mihomoProxyDelay(
 
 export async function mihomoGroupDelay(group: string, url?: string): Promise<ControllerGroupDelay> {
   return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('mihomoGroupDelay', group, url))
+}
+
+export async function mihomoRulesDisable(rules: Record<string, boolean>): Promise<void> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('mihomoRulesDisable', rules))
 }
 
 export async function patchMihomoConfig(patch: Partial<MihomoConfig>): Promise<void> {
@@ -213,6 +215,10 @@ export async function setOverride(id: string, ext: 'js' | 'yaml', str: string): 
 
 export async function restartCore(): Promise<void> {
   return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('restartCore'))
+}
+
+export async function restartMihomoConnections(): Promise<void> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('restartMihomoConnections'))
 }
 
 export async function startMonitor(): Promise<void> {
@@ -444,6 +450,10 @@ export async function closeTrayIcon(): Promise<void> {
   return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('closeTrayIcon'))
 }
 
+export async function setDockVisible(visible: boolean): Promise<void> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('setDockVisible', visible))
+}
+
 export async function showMainWindow(): Promise<void> {
   return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('showMainWindow'))
 }
@@ -560,7 +570,9 @@ export async function registerShortcut(
   )
 }
 
-export async function copyEnv(type: 'bash' | 'cmd' | 'powershell' | 'nushell'): Promise<void> {
+export async function copyEnv(
+  type: 'bash' | 'fish' | 'cmd' | 'powershell' | 'nushell'
+): Promise<void> {
   return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('copyEnv', type))
 }
 

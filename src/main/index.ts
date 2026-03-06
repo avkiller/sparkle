@@ -34,6 +34,39 @@ import { getUserAgent } from './utils/userAgent'
 
 let quitTimeout: NodeJS.Timeout | null = null
 export let mainWindow: BrowserWindow | null = null
+let isCreatingWindow = false
+let windowShown = false
+let createWindowPromiseResolve: (() => void) | null = null
+let createWindowPromise: Promise<void> | null = null
+
+async function scheduleLightweightMode(): Promise<void> {
+  const {
+    autoLightweight = false,
+    autoLightweightDelay = 60,
+    autoLightweightMode = 'core'
+  } = await getAppConfig()
+
+  if (!autoLightweight) return
+
+  if (quitTimeout) {
+    clearTimeout(quitTimeout)
+  }
+
+  const enterLightweightMode = async (): Promise<void> => {
+    if (autoLightweightMode === 'core') {
+      await quitWithoutCore()
+    } else if (autoLightweightMode === 'tray') {
+      if (mainWindow && !mainWindow.isVisible()) {
+        mainWindow.destroy()
+        if (process.platform === 'darwin' && app.dock) {
+          app.dock.hide()
+        }
+      }
+    }
+  }
+
+  quitTimeout = setTimeout(enterLightweightMode, autoLightweightDelay * 1000)
+}
 
 const syncConfig = getAppConfigSync()
 
@@ -132,6 +165,8 @@ app.on('open-url', async (_event, url) => {
 let isQuitting = false,
   notQuitDialog = false
 
+let lastQuitAttempt = 0
+
 export function setNotQuitDialog(): void {
   notQuitDialog = true
 }
@@ -174,9 +209,27 @@ function showQuitConfirmDialog(): Promise<boolean> {
   })
 }
 
+app.on('window-all-closed', () => {
+  // Don't quit app when all windows are closed
+})
+
 app.on('before-quit', async (e) => {
   if (!isQuitting && !notQuitDialog) {
     e.preventDefault()
+
+    const now = Date.now()
+    if (now - lastQuitAttempt < 500) {
+      isQuitting = true
+      if (quitTimeout) {
+        clearTimeout(quitTimeout)
+        quitTimeout = null
+      }
+      triggerSysProxy(false, false)
+      await stopCore()
+      app.exit()
+      return
+    }
+    lastQuitAttempt = now
 
     const confirmed = await showQuitConfirmDialog()
 
@@ -224,19 +277,6 @@ app.whenReady().then(async () => {
     dialog.showErrorBox('应用初始化失败', `${e}`)
     app.quit()
   }
-  try {
-    const [startPromise] = await startCore()
-    startPromise.then(async () => {
-      await initProfileUpdater()
-    })
-  } catch (e) {
-    dialog.showErrorBox('内核启动出错', `${e}`)
-  }
-  try {
-    await startMonitor()
-  } catch {
-    // ignore
-  }
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.
@@ -244,16 +284,53 @@ app.whenReady().then(async () => {
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
-  const { showFloatingWindow: showFloating = false, disableTray = false } = await getAppConfig()
+  const appConfig = await getAppConfig()
+  const { showFloatingWindow: showFloating = false, disableTray = false } = appConfig
   registerIpcMainHandlers()
-  await createWindow()
+
+  const createWindowPromise = createWindow(appConfig)
+
+  let coreStarted = false
+
+  const coreStartPromise = (async (): Promise<void> => {
+    try {
+      const [startPromise] = await startCore()
+      startPromise.then(async () => {
+        await initProfileUpdater()
+      })
+      coreStarted = true
+    } catch (e) {
+      dialog.showErrorBox('内核启动出错', `${e}`)
+    }
+  })()
+
+  const monitorPromise = (async (): Promise<void> => {
+    try {
+      await startMonitor()
+    } catch {
+      // ignore
+    }
+  })()
+
+  await createWindowPromise
+
+  const uiTasks: Promise<void>[] = [initShortcut()]
+
   if (showFloating) {
-    showFloatingWindow()
+    uiTasks.push(Promise.resolve(showFloatingWindow()))
   }
   if (!disableTray) {
-    await createTray()
+    uiTasks.push(createTray())
   }
-  await initShortcut()
+
+  await Promise.all(uiTasks)
+
+  await Promise.all([coreStartPromise, monitorPromise])
+
+  if (coreStarted) {
+    mainWindow?.webContents.send('core-started')
+  }
+
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the
     // dock icon is clicked and there are no other windows open.
@@ -323,7 +400,7 @@ async function handleDeepLink(url: string): Promise<void> {
 
 async function showProfileInstallConfirm(url: string, name?: string | null): Promise<boolean> {
   if (!mainWindow) {
-    return false
+    await createWindow()
   }
   let extractedName = name
 
@@ -371,13 +448,11 @@ function parseFilename(str: string): string {
   }
 }
 
-function showOverrideInstallConfirm(url: string, name?: string | null): Promise<boolean> {
+async function showOverrideInstallConfirm(url: string, name?: string | null): Promise<boolean> {
+  if (!mainWindow) {
+    await createWindow()
+  }
   return new Promise((resolve) => {
-    if (!mainWindow) {
-      resolve(false)
-      return
-    }
-
     let finalName = name
     if (!finalName) {
       const urlObj = new URL(url)
@@ -400,129 +475,154 @@ function showOverrideInstallConfirm(url: string, name?: string | null): Promise<
   })
 }
 
-export async function createWindow(): Promise<void> {
-  const { useWindowFrame = false } = await getAppConfig()
-  const mainWindowState = windowStateKeeper({
-    defaultWidth: 800,
-    defaultHeight: 700,
-    file: 'window-state.json'
-  })
-  // https://github.com/electron/electron/issues/16521#issuecomment-582955104
-  if (process.platform === 'darwin') {
-    await createApplicationMenu()
-  } else {
-    Menu.setApplicationMenu(null)
+export async function createWindow(appConfig?: AppConfig): Promise<void> {
+  if (isCreatingWindow) {
+    if (createWindowPromise) {
+      await createWindowPromise
+    }
+    return
   }
-  mainWindow = new BrowserWindow({
-    minWidth: 800,
-    minHeight: 600,
-    width: mainWindowState.width,
-    height: mainWindowState.height,
-    x: mainWindowState.x,
-    y: mainWindowState.y,
-    show: false,
-    frame: useWindowFrame,
-    fullscreenable: false,
-    titleBarStyle: useWindowFrame ? 'default' : 'hidden',
-    titleBarOverlay: useWindowFrame
-      ? false
-      : {
-          height: 49
-        },
-    autoHideMenuBar: true,
-    ...(process.platform === 'linux' ? { icon: icon } : {}),
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      spellcheck: false,
-      sandbox: false
-    }
+  isCreatingWindow = true
+  createWindowPromise = new Promise<void>((resolve) => {
+    createWindowPromiseResolve = resolve
   })
-  mainWindowState.manage(mainWindow)
-  mainWindow.on('ready-to-show', async () => {
-    const {
-      silentStart = false,
-      autoQuitWithoutCore = false,
-      autoQuitWithoutCoreDelay = 60
-    } = await getAppConfig()
-    if (autoQuitWithoutCore && !mainWindow?.isVisible()) {
-      if (quitTimeout) {
-        clearTimeout(quitTimeout)
+  try {
+    const config = appConfig ?? (await getAppConfig())
+    const { useWindowFrame = false } = config
+
+    const [mainWindowState] = await Promise.all([
+      Promise.resolve(
+        windowStateKeeper({
+          defaultWidth: 800,
+          defaultHeight: 700,
+          file: 'window-state.json'
+        })
+      ),
+      process.platform === 'darwin'
+        ? createApplicationMenu()
+        : Promise.resolve(Menu.setApplicationMenu(null))
+    ])
+    mainWindow = new BrowserWindow({
+      minWidth: 800,
+      minHeight: 600,
+      width: mainWindowState.width,
+      height: mainWindowState.height,
+      x: mainWindowState.x,
+      y: mainWindowState.y,
+      show: false,
+      frame: useWindowFrame,
+      fullscreenable: false,
+      titleBarStyle: useWindowFrame ? 'default' : 'hidden',
+      titleBarOverlay: useWindowFrame
+        ? false
+        : {
+            height: 49
+          },
+      autoHideMenuBar: true,
+      ...(process.platform === 'linux' ? { icon: icon } : {}),
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.js'),
+        spellcheck: false,
+        sandbox: false
       }
-      quitTimeout = setTimeout(async () => {
-        await quitWithoutCore()
-      }, autoQuitWithoutCoreDelay * 1000)
-    }
-    if (!silentStart) {
-      if (quitTimeout) {
-        clearTimeout(quitTimeout)
+    })
+    mainWindowState.manage(mainWindow)
+    mainWindow.on('ready-to-show', async () => {
+      const { silentStart = false } = await getAppConfig()
+      if (!silentStart) {
+        if (quitTimeout) {
+          clearTimeout(quitTimeout)
+        }
+        windowShown = true
+        mainWindow?.show()
+        mainWindow?.focusOnWebView()
+      } else {
+        await scheduleLightweightMode()
       }
-      mainWindow?.show()
-      mainWindow?.focusOnWebView()
-    }
-  })
-  mainWindow.webContents.on('did-fail-load', () => {
-    mainWindow?.webContents.reload()
-  })
+    })
+    mainWindow.webContents.on('did-fail-load', () => {
+      mainWindow?.webContents.reload()
+    })
 
-  mainWindow.on('close', async (event) => {
-    event.preventDefault()
-    mainWindow?.hide()
-    const { autoQuitWithoutCore = false, autoQuitWithoutCoreDelay = 60 } = await getAppConfig()
-    if (autoQuitWithoutCore) {
-      if (quitTimeout) {
-        clearTimeout(quitTimeout)
+    mainWindow.on('close', async (event) => {
+      event.preventDefault()
+      mainWindow?.hide()
+      if (windowShown) {
+        await scheduleLightweightMode()
       }
-      quitTimeout = setTimeout(async () => {
-        await quitWithoutCore()
-      }, autoQuitWithoutCoreDelay * 1000)
+    })
+
+    mainWindow.on('closed', () => {
+      mainWindow = null
+    })
+
+    mainWindow.on('resized', () => {
+      if (mainWindow) mainWindowState.saveState(mainWindow)
+    })
+
+    mainWindow.on('unmaximize', () => {
+      if (mainWindow) mainWindowState.saveState(mainWindow)
+    })
+
+    mainWindow.on('move', () => {
+      if (mainWindow) mainWindowState.saveState(mainWindow)
+    })
+
+    mainWindow.on('session-end', async () => {
+      triggerSysProxy(false, false)
+      await stopCore()
+    })
+
+    mainWindow.webContents.setWindowOpenHandler((details) => {
+      shell.openExternal(details.url)
+      return { action: 'deny' }
+    })
+    // HMR for renderer base on electron-vite cli.
+    // Load the remote URL for development or the local html file for production.
+    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+      mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    } else {
+      mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
     }
-  })
-
-  mainWindow.on('resized', () => {
-    if (mainWindow) mainWindowState.saveState(mainWindow)
-  })
-
-  mainWindow.on('unmaximize', () => {
-    if (mainWindow) mainWindowState.saveState(mainWindow)
-  })
-
-  mainWindow.on('move', () => {
-    if (mainWindow) mainWindowState.saveState(mainWindow)
-  })
-
-  mainWindow.on('session-end', async () => {
-    triggerSysProxy(false, false)
-    await stopCore()
-  })
-
-  mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
-    return { action: 'deny' }
-  })
-  // HMR for renderer base on electron-vite cli.
-  // Load the remote URL for development or the local html file for production.
-  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
-  } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+  } finally {
+    isCreatingWindow = false
+    if (createWindowPromiseResolve) {
+      createWindowPromiseResolve()
+      createWindowPromiseResolve = null
+    }
+    createWindowPromise = null
   }
 }
 
-export function triggerMainWindow(): void {
-  if (mainWindow?.isVisible()) {
+export async function triggerMainWindow(): Promise<void> {
+  if (mainWindow && mainWindow.isVisible()) {
     closeMainWindow()
   } else {
-    showMainWindow()
+    await showMainWindow()
   }
 }
 
-export function showMainWindow(): void {
-  if (mainWindow) {
-    if (quitTimeout) {
-      clearTimeout(quitTimeout)
+export async function showMainWindow(): Promise<void> {
+  if (quitTimeout) {
+    clearTimeout(quitTimeout)
+  }
+  if (process.platform === 'darwin' && app.dock) {
+    const { useDockIcon = true } = await getAppConfig()
+    if (!useDockIcon) {
+      app.dock.hide()
     }
+  }
+  if (mainWindow) {
+    windowShown = true
     mainWindow.show()
     mainWindow.focusOnWebView()
+  } else {
+    await createWindow()
+    if (mainWindow !== null) {
+      windowShown = true
+      ;(mainWindow as BrowserWindow).show()
+      ;(mainWindow as BrowserWindow).focusOnWebView()
+    }
   }
 }
 

@@ -238,8 +238,18 @@ function cleanDnsConfig(profile: MihomoConfig, controlDns: boolean): void {
     if (dnsConfig[key]?.length === 0) delete dnsConfig[key]
   })
 
+  if (dnsConfig['respect-rules'] === false || dnsConfig['proxy-server-nameserver']?.length === 0) {
+    delete dnsConfig['respect-rules']
+  }
+
   if (dnsConfig['nameserver-policy'] && Object.keys(dnsConfig['nameserver-policy']).length === 0) {
     delete dnsConfig['nameserver-policy']
+  }
+  if (
+    dnsConfig['proxy-server-nameserver-policy'] &&
+    Object.keys(dnsConfig['proxy-server-nameserver-policy']).length === 0
+  ) {
+    delete dnsConfig['proxy-server-nameserver-policy']
   }
 
   delete dnsConfig.fallback

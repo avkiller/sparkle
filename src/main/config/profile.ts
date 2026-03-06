@@ -66,6 +66,7 @@ export async function updateProfileItem(item: ProfileItem): Promise<void> {
     throw new Error('Profile not found')
   }
   config.items[index] = item
+  if (!item.autoUpdate) await delProfileUpdater(item.id)
   await setProfileConfig(config)
 }
 
@@ -125,6 +126,7 @@ export async function createProfile(item: Partial<ProfileItem>): Promise<Profile
     fingerprint: item.fingerprint,
     ua: item.ua,
     verify: item.verify ?? false,
+    autoUpdate: item.autoUpdate ?? true,
     substore: item.substore || false,
     interval: item.interval || 0,
     override: item.override || [],
